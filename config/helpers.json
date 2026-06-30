@@ -1,0 +1,11 @@
+{
+  "helpers": [
+    {
+      "name": "katson",
+      "number": "+2349075928878",
+      "country": "Nigeria",
+      "flag": "🇳🇬"
+    }
+  ],
+  "_note": "Add your helpers here. Each entry needs name, number (with country code), country, and flag emoji."
+}
