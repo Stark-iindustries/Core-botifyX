@@ -1,0 +1,10 @@
+node_modules/
+core/src/Session/
+core/src/Database/
+core/tmp/
+pairing/sessions/
+*.db
+*.sqlite
+.env
+*.log
+.DS_Store
