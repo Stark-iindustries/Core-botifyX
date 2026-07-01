@@ -234,6 +234,11 @@ async function processMessage(Cypher, msg, db, plugins, saveDatabase, loadBlackl
             kickQueue,
             warnHandler: buildWarnHandler(Cypher, m, db, saveDatabase),
             groupMetadata,
+            participants:  groupMetadata?.participants || [],
+            isGroupAdmins: isAdmins,
+            isGroupOwner:  groupMetadata?.owner
+                             ? sender === groupMetadata.owner
+                             : false,
         };
 
         // 19. Sticker alias check
