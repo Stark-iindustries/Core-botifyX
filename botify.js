@@ -1,77 +1,107 @@
 'use strict';
 
-const path     = require('path');
-const fs       = require('fs');
-const readline = require('readline');
-const pino     = require('pino');
+const path = require('path');
+const fs   = require('fs');
+const pino = require('pino');
 
 // ── 1. Load .env first ────────────────────────────────────────────────────────
 const ENV_FILE = path.join(__dirname, '.env');
 require('dotenv').config({ path: ENV_FILE });
 
-// ── Colour helpers (no chalk dependency at this point) ────────────────────────
+// ── Colour helpers ────────────────────────────────────────────────────────────
 const cyan   = (t) => `\x1b[36m${t}\x1b[0m`;
 const green  = (t) => `\x1b[32m${t}\x1b[0m`;
 const yellow = (t) => `\x1b[33m${t}\x1b[0m`;
 const red    = (t) => `\x1b[31m${t}\x1b[0m`;
-const bold   = (t) => `\x1b[1m${t}\x1b[0m`;
 
 // ── .env writer ───────────────────────────────────────────────────────────────
 function writeEnvKey(key, value) {
-    let lines = [];
-    if (fs.existsSync(ENV_FILE)) {
-        lines = fs.readFileSync(ENV_FILE, 'utf8').split('\n');
-    }
+    let lines = fs.existsSync(ENV_FILE) ? fs.readFileSync(ENV_FILE, 'utf8').split('\n') : [];
     const idx  = lines.findIndex(l => l.startsWith(key + '='));
-    const line = `${key}=${value}`;
-    if (idx >= 0) lines[idx] = line;
-    else lines.push(line);
+    if (idx >= 0) lines[idx] = `${key}=${value}`;
+    else lines.push(`${key}=${value}`);
     fs.writeFileSync(ENV_FILE, lines.join('\n'), 'utf8');
 }
 
-// ── 2. Session ID prompt ──────────────────────────────────────────────────────
+// ── Platform check — which platforms allow interactive console input ───────────
+function canPromptInteractively() {
+    const e = process.env;
+    const isCloudNoConsole = !!(
+        e.RAILWAY_SERVICE_ID || e.RAILWAY_STATIC_URL ||
+        e.DYNO || e.RENDER || e.KOYEB_APP_NAME || e.FLY_APP_NAME
+    );
+    return !isCloudNoConsole; // Pterodactyl, Termux, Local all support input
+}
+
+// ── 2. Session ID prompt (raw stdin — no readline, avoids ERR_USE_AFTER_CLOSE) ─
 function promptForSessionId() {
     return new Promise((resolve, reject) => {
-        const rl = readline.createInterface({
-            input:  process.stdin,
-            output: process.stdout,
-            terminal: false,
-        });
+        const TIMEOUT_MS = 300000; // 5 min
 
-        const ask = () => {
-            process.stdout.write(red('\nPlease wait for a few seconds to enter your session id!\n'));
-            process.stdout.write(cyan('[BOTIFY-X] Session ID format: BOTIFY-X=<base64string>\n'));
-            process.stdout.write('\nPaste Session ID → ');
+        process.stdout.write(red('\nPlease wait for a few seconds to enter your session id!\n'));
+        process.stdout.write(cyan('[BOTIFY-X] Session ID format: BOTIFY-X=<base64string>\n'));
+        process.stdout.write('\nPaste Session ID \u2192 ');
 
-            rl.once('line', (input) => {
-                const id = input.trim();
-                if (!id) {
-                    process.stdout.write(red('[BOTIFY-X] Nothing entered. Try again.\n\n'));
-                    return ask();
-                }
-                if (!id.startsWith('BOTIFY-X=') && !id.startsWith('MEGA-')) {
-                    process.stdout.write(red('[BOTIFY-X] ❌ Invalid format. Must start with BOTIFY-X= or MEGA-\n\n'));
-                    return ask();
-                }
-                rl.close();
-                writeEnvKey('SESSION_ID', id);
-                process.env.SESSION_ID = id;
-                process.stdout.write(green('[BOTIFY-X] ✅ Session ID saved.\n\n'));
-                resolve(id);
-            });
+        let buf      = '';
+        let settled  = false;
+
+        const done = (err, val) => {
+            if (settled) return;
+            settled = true;
+            clearTimeout(timer);
+            process.stdin.removeListener('data',  onData);
+            process.stdin.removeListener('end',   onEnd);
+            process.stdin.removeListener('error', onError);
+            try { process.stdin.pause(); } catch (_) {}
+            if (err) reject(err); else resolve(val);
         };
 
-        rl.on('error', reject);
-        ask();
+        const onData = (chunk) => {
+            buf += chunk.toString();
+            const nl = buf.indexOf('\n');
+            if (nl === -1) return;
+            const id   = buf.slice(0, nl).trim();
+            buf = buf.slice(nl + 1);
+
+            if (!id) {
+                process.stdout.write(red('[BOTIFY-X] Nothing entered. Try again.\n\n'));
+                process.stdout.write('Paste Session ID \u2192 ');
+                return;
+            }
+            if (!id.startsWith('BOTIFY-X=') && !id.startsWith('MEGA-')) {
+                process.stdout.write(red('[BOTIFY-X] \u274c Invalid format. Must start with BOTIFY-X= or MEGA-\n\n'));
+                process.stdout.write('Paste Session ID \u2192 ');
+                return;
+            }
+
+            writeEnvKey('SESSION_ID', id);
+            process.env.SESSION_ID = id;
+            process.stdout.write(green('[BOTIFY-X] \u2705 Session ID saved.\n\n'));
+            done(null, id);
+        };
+
+        const onEnd   = () => done(new Error('stdin closed before session ID was entered'));
+        const onError = (e) => done(e);
+
+        const timer = setTimeout(() => done(new Error('Timed out waiting for session ID (5 min)')), TIMEOUT_MS);
+
+        try {
+            process.stdin.resume();
+            process.stdin.setEncoding('utf8');
+            process.stdin.on('data',  onData);
+            process.stdin.on('end',   onEnd);
+            process.stdin.on('error', onError);
+        } catch (e) {
+            done(e);
+        }
     });
 }
 
 // ── 3. Database migration ─────────────────────────────────────────────────────
 function migrateDatabase(db) {
-    let changed = false;
     const defaults = {
         mode: 'private', botname: 'BotifyX', ownername: 'Not Set!',
-        watermark: '©BOTIFY X', packname: 'BOTIFY X', author: 'Mr Stark',
+        watermark: '\u00a9BOTIFY X', packname: 'BOTIFY X', author: 'Mr Stark',
         timezone: 'Africa/Lagos', alwaysonline: true, anticall: false,
         antidelete: 'private', antibug: false, autoreact: false,
         autoread: false, autotype: false, autorecord: false,
@@ -79,6 +109,7 @@ function migrateDatabase(db) {
         autoviewstatus: true, autoreactstatus: false, statusantidelete: true,
         fontstyle: false, menustyle: '2', menuimage: '', warnings: {}, warnLimit: 5,
     };
+    let changed = false;
     for (const [k, v] of Object.entries(defaults)) {
         if (db.settings[k] === undefined) { db.settings[k] = v; changed = true; }
     }
@@ -88,11 +119,11 @@ function migrateDatabase(db) {
     return changed;
 }
 
-// ── 4. Clean old chatbot messages (older than 1 day) ─────────────────────────
+// ── 4. Clean old chatbot messages ─────────────────────────────────────────────
 function cleanChatbotMessages(db) {
     if (!db.chatbotHistory) return 0;
     const cutoff = Date.now() - 86400000;
-    let removed  = 0;
+    let removed = 0;
     for (const jid of Object.keys(db.chatbotHistory)) {
         const before = (db.chatbotHistory[jid] || []).length;
         db.chatbotHistory[jid] = (db.chatbotHistory[jid] || []).filter(m => m.ts > cutoff);
@@ -119,25 +150,17 @@ function cleanOldMessages(db) {
 
 // ── 6. Main ───────────────────────────────────────────────────────────────────
 (async () => {
-
     console.log(cyan('[BOTIFY-X] Starting 1/3...'));
-
-    // Auth state info
     console.log(yellow('[AUTH] Using better-sqlite3 as auth state'));
 
-    // PostgreSQL
     const pgUrl = process.env.DATABASE_URL || process.env.POSTGRES_URL || '';
-    if (pgUrl) {
-        console.log(cyan(`[BOTIFY-X] PostgreSQL URL: ✅ ${pgUrl.split('@').pop()}`));
-    } else {
-        console.log(cyan('[BOTIFY-X] PostgreSQL URL: ❌Not provided'));
-    }
+    console.log(pgUrl
+        ? cyan(`[BOTIFY-X] PostgreSQL URL: \u2705 ${pgUrl.split('@').pop()}`)
+        : cyan('[BOTIFY-X] PostgreSQL URL: \u274cNot provided'));
 
-    // Port
     const PORT = process.env.PORT || 3000;
     console.log(cyan(`[BOTIFY-X] Running on port: ${PORT}`));
 
-    // Load globals / developer config
     require('./src/Core/developer');
 
     const { loadDatabase, saveDatabase, loadBlacklist } = require('./src/Core/database');
@@ -163,7 +186,6 @@ function cleanOldMessages(db) {
 
     createTmpFolder();
 
-    // ── Load database ──────────────────────────────────────────────────────────
     const db = loadDatabase();
     global.db = db;
 
@@ -171,11 +193,9 @@ function cleanOldMessages(db) {
     console.log(cyan('[BOTIFY-X] Connected to SQLite Database.'));
     console.log(cyan('[BOTIFY-X] Connected to Store Database.'));
 
-    // Clean old messages
     const oldMsgCount = cleanOldMessages(db);
     console.log(cyan(`[BOTIFY-X] Cleaned up ${oldMsgCount} old messages`));
 
-    // ── Load plugins ───────────────────────────────────────────────────────────
     const pluginFiles = fs.readdirSync(PLUGIN_DIR).filter(f => f.endsWith('.js'));
     const plugins = [];
     for (const file of pluginFiles) {
@@ -193,32 +213,30 @@ function cleanOldMessages(db) {
 
     // ── Session ID check ───────────────────────────────────────────────────────
     if (!process.env.SESSION_ID) {
-        const isTTY = process.stdin.isTTY;
-        if (isTTY) {
+        if (canPromptInteractively()) {
             try {
                 await promptForSessionId();
             } catch (e) {
-                console.error(red(`[BOTIFY-X] ❌ Could not read Session ID: ${e.message}`));
+                console.error(red(`[BOTIFY-X] \u274c Could not read Session ID: ${e.message}`));
                 process.exit(1);
             }
         } else {
-            console.error(red('[BOTIFY-X] ❌ SESSION_ID is not set.'));
-            console.error(cyan('[BOTIFY-X] On Railway  → Variables tab → add  SESSION_ID = BOTIFY-X=...'));
-            console.error(cyan('[BOTIFY-X] On Heroku   → Settings → Config Vars → add SESSION_ID'));
-            console.error(cyan('[BOTIFY-X] On Render   → Environment → add SESSION_ID'));
+            console.error(red('[BOTIFY-X] \u274c SESSION_ID is not set.'));
+            console.error(cyan('[BOTIFY-X] On Railway  \u2192 Variables tab \u2192 add  SESSION_ID = BOTIFY-X=...'));
+            console.error(cyan('[BOTIFY-X] On Heroku   \u2192 Settings \u2192 Config Vars \u2192 add SESSION_ID'));
+            console.error(cyan('[BOTIFY-X] On Render   \u2192 Environment \u2192 add SESSION_ID'));
             console.error(cyan('[BOTIFY-X] Then redeploy / restart.'));
             process.exit(1);
         }
     }
 
     // ── Database migration ─────────────────────────────────────────────────────
-    console.log(cyan('[BOTIFY-X] 🔧 Migrating old database schema...'));
+    console.log(cyan('[BOTIFY-X] \uD83D\uDD27 Migrating old database schema...'));
     migrateDatabase(db);
-    console.log(green('[BOTIFY-X] ✅Database migration complete'));
+    console.log(green('[BOTIFY-X] \u2705Database migration complete'));
 
-    // Clean chatbot messages older than 1 day
     const cbCleaned = cleanChatbotMessages(db);
-    console.log(cyan(`[BOTIFY-X] Cleaned up chatbot messages older than 1 days.`));
+    console.log(cyan('[BOTIFY-X] Cleaned up chatbot messages older than 1 days.'));
 
     console.log(cyan('[BOTIFY-X] Starting 2/3...'));
     console.log(cyan(`[BOTIFY-X] Platform : ${detectPlatform()}`));
@@ -227,12 +245,11 @@ function cleanOldMessages(db) {
     let retryCount = 0;
     const MAX_RETRIES = 5;
 
-    // ── Bot connect ────────────────────────────────────────────────────────────
     async function startBot() {
         const { state, saveCreds } = await useMultiFileAuthState(SESSION_DIR);
         const { version }          = await fetchLatestBaileysVersion();
 
-        console.log(cyan(`[BOTIFY-X] Starting 3/3...`));
+        console.log(cyan('[BOTIFY-X] Starting 3/3...'));
         console.log(cyan(`[BOTIFY-X] WA Web v${version.join('.')}`));
 
         const Cypher = makeWASocket({
@@ -250,7 +267,6 @@ function cleanOldMessages(db) {
 
         global.Cypher = Cypher;
 
-        // connection.update ────────────────────────────────────────────────────
         Cypher.ev.on('connection.update', async (update) => {
             const { connection, lastDisconnect } = update;
 
@@ -264,11 +280,11 @@ function cleanOldMessages(db) {
                 global.ownernumber = ownerRaw.replace(/[^0-9]/g, '');
                 global.creator     = `${global.ownernumber}@s.whatsapp.net`;
                 global.botname     = db.settings.botname   || 'BotifyX';
-                global.wm          = db.settings.watermark || '©BOTIFY X';
+                global.wm          = db.settings.watermark || '\u00a9BOTIFY X';
                 global.timezones   = db.settings.timezone  || 'Africa/Lagos';
                 global.ownername   = db.settings.ownername || 'Mr Stark';
 
-                console.log(green(`[BOTIFY-X] ✅ Connected as ${Cypher.user?.name || botNum}`));
+                console.log(green(`[BOTIFY-X] \u2705 Connected as ${Cypher.user?.name || botNum}`));
                 console.log(cyan(`[BOTIFY-X] Owner     : ${global.creator}`));
                 console.log(cyan(`[BOTIFY-X] Mode      : ${db.settings.mode || 'private'}`));
 
@@ -283,31 +299,29 @@ function cleanOldMessages(db) {
                 const reason    = new Boom(lastDisconnect?.error)?.output?.statusCode;
                 const loggedOut = reason === DisconnectReason.loggedOut;
 
-                console.log(red(`[BOTIFY-X] Disconnected — code ${reason}`));
+                console.log(red(`[BOTIFY-X] Disconnected \u2014 code ${reason}`));
 
                 if (loggedOut) {
                     try { fs.rmSync(SESSION_DIR, { recursive: true, force: true }); } catch (_) {}
                     writeEnvKey('SESSION_ID', '');
-                    console.log(red('[BOTIFY-X] Session expired. Restart the bot and paste a new Session ID.'));
+                    console.log(red('[BOTIFY-X] Session expired. Restart and paste a new Session ID.'));
                     process.exit(1);
                 }
 
                 if (retryCount < MAX_RETRIES) {
                     retryCount++;
                     const delay = Math.min(3000 * retryCount, 30000);
-                    console.log(yellow(`[BOTIFY-X] Reconnecting in ${delay / 1000}s (attempt ${retryCount})…`));
+                    console.log(yellow(`[BOTIFY-X] Reconnecting in ${delay / 1000}s (attempt ${retryCount})\u2026`));
                     setTimeout(startBot, delay);
                 } else {
-                    console.log(red('[BOTIFY-X] Max reconnect attempts reached. Restarting process…'));
+                    console.log(red('[BOTIFY-X] Max reconnect attempts reached. Restarting process\u2026'));
                     process.exit(1);
                 }
             }
         });
 
-        // creds.update ─────────────────────────────────────────────────────────
         Cypher.ev.on('creds.update', saveCreds);
 
-        // messages.upsert ──────────────────────────────────────────────────────
         Cypher.ev.on('messages.upsert', async ({ messages, type }) => {
             if (type !== 'notify') return;
             for (const msg of messages) {
@@ -319,7 +333,6 @@ function cleanOldMessages(db) {
             }
         });
 
-        // messages.update ──────────────────────────────────────────────────────
         Cypher.ev.on('messages.update', async (updates) => {
             for (const update of updates) {
                 try {
@@ -335,7 +348,6 @@ function cleanOldMessages(db) {
             }
         });
 
-        // call ─────────────────────────────────────────────────────────────────
         Cypher.ev.on('call', async (calls) => {
             for (const call of calls) {
                 if (!db.settings.anticall || call.status !== 'offer') continue;
@@ -348,20 +360,16 @@ function cleanOldMessages(db) {
                     const rawMsg   = db.settings.anticallmsg || '';
                     const replyMsg = rawMsg
                         ? rawMsg.replace(/{user}/g, `@${call.from.split('@')[0]}`).replace(/{calltype}/g, callType)
-                        : `🚨 *CALL DETECTED!*\n\n@${call.from.split('@')[0]}, my owner cannot receive ${callType} calls.\n⚠️ Your call was *declined*. Please message instead.`;
+                        : `\uD83D\uDEA8 *CALL DETECTED!*\n\n@${call.from.split('@')[0]}, my owner cannot receive ${callType} calls.\n\u26a0\ufe0f Your call was *declined*. Please message instead.`;
                     await Cypher.sendMessage(call.from, { text: replyMsg, mentions: [call.from] });
                 } catch (_) {}
             }
         });
 
-        // group-participants.update ────────────────────────────────────────────
         Cypher.ev.on('group-participants.update', async (update) => {
-            try {
-                await handleGroupParticipants(Cypher, update, db);
-            } catch (_) {}
+            try { await handleGroupParticipants(Cypher, update, db); } catch (_) {}
         });
 
-        // contacts.update ──────────────────────────────────────────────────────
         Cypher.ev.on('contacts.update', async (contacts) => {
             if (!db.users) db.users = [];
             for (const c of contacts) {
@@ -369,7 +377,6 @@ function cleanOldMessages(db) {
             }
         });
 
-        // Intervals ────────────────────────────────────────────────────────────
         if (db.settings.alwaysonline) {
             setInterval(() => Cypher.sendPresenceUpdate('available').catch(() => {}), 30000);
         }
@@ -385,6 +392,5 @@ function cleanOldMessages(db) {
         }
     }
 
-    // ── Download session then start ────────────────────────────────────────────
     await downloadSessionData(startBot);
 })();
