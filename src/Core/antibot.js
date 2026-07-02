@@ -1,3 +1,5 @@
+const { jidNormalizedUser } = require('@whiskeysockets/baileys');
+
 const getGroupAdmins = (participants) => {
     let admins = []
     for (let i of participants) {
@@ -12,7 +14,7 @@ async function antiBot(Cypher, m, db) {
   const groupMetadata = m.isGroup ? await Cypher.groupMetadata(m.chat).catch(e => {}) : ''
   if (!groupMetadata) return;
 
-  const botNumber = await Cypher.decodeJid(Cypher.user.id);
+  const botNumber = jidNormalizedUser(Cypher.user.id);
   const participants = groupMetadata.participants || [];
   const groupAdmins = await getGroupAdmins(participants);
   const isBotAdmin = groupAdmins.includes(botNumber);
