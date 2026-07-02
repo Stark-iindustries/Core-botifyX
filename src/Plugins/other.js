@@ -9,6 +9,7 @@ const { formatSize, checkBandwidth, runtime } = require('../../lib/myfunc');
 const checkDiskSpace = require('check-disk-space').default;
 const performance = require('perf_hooks').performance;
 const { getMenuImage } = require('../Core/menuimg');
+const { detectPlatform } = require('../Core/bot');
 const si = require("systeminformation");
 
 function getCPUUsage() {
@@ -35,7 +36,7 @@ module.exports = [
 {
   command: ["botstatus", "statusbot"],
   react: "📊",
-  operate: async ({ Cypher, m, reply, detectPlatform, db }) => {
+  operate: async ({ Cypher, m, reply, db }) => {
     const fontTransform = fonts[db.settings.fontstyle] || fonts.default;
 
     const latencyStart = performance.now();
@@ -144,7 +145,7 @@ module.exports = [
   {
     command: ['ping', 'p'],
     react: "🏓",
-    operate: async ({ m, Cypher, botname, db }) => {
+    operate: async ({ m, Cypher, db }) => {
       const startTime = performance.now();
       const fontTransform = fonts[db.settings.fontstyle] || fonts.default;
 
@@ -158,7 +159,7 @@ module.exports = [
         const latency = `${(endTime - startTime).toFixed(2)} ms`;
 
         await Cypher.sendMessage(m.chat, {
-          text: fontTransform(`*🔹 ${botname} Speed:* ${latency}`),
+          text: fontTransform(`*🔹 ${db.settings.botname || 'BotifyX'} Speed:* ${latency}`),
           edit: sentMessage.key,
           contextInfo: { quotedMessage: m.message }
         });
@@ -172,7 +173,49 @@ module.exports = [
     }
   },
   {
-    command: ['runtime', 'uptime'],
+      command: ['menu'],
+      operate: async ({ Cypher, m, db, plugins, prefix }) => {
+        const t0 = performance.now();
+        const loadingMsg = await Cypher.sendMessage(m.chat, { text: 'Loading menu...' }, { quoted: m });
+        const pingMs = (performance.now() - t0).toFixed(2);
+
+        // Gather live data concurrently
+        const [cpuUsage] = await Promise.all([getCPUUsage()]);
+
+        const totalRam = os.totalmem();
+        const usedRam  = totalRam - os.freemem();
+        const ramPct   = Math.round((usedRam / totalRam) * 100);
+        const filled   = Math.round(ramPct / 10);
+        const ramBar   = '█'.repeat(filled) + '░'.repeat(10 - filled);
+
+        const version     = require('../../package.json').version;
+        const platform    = detectPlatform();
+        const botname     = db.settings.botname  || 'BotifyX';
+        const owner       = db.settings.ownername || 'Not Set!';
+        const mode        = db.settings.mode     || 'private';
+        const pluginCount = plugins ? plugins.length : 0;
+
+        const menu =
+          `┏▣ ◈ *${botname}* ◈\n` +
+          `┃ *ᴏᴡɴᴇʀ* : ${owner}\n` +
+          `┃ *ᴘʀᴇғɪˣ* : ${prefix}\n` +
+          `┃ *ʜᴏɢᴛ* : ${platform}\n` +
+          `┃ *ᴘʟᴜɢɪɴs* : ${pluginCount}\n` +
+          `┃ *ᴍᴏᴅᴇ* : ${mode}\n` +
+          `┃ *ᴠᴇʀsɪᴏɴ* : v${version}\n` +
+          `┃ *sᴘᴇᴇᴅ* : ${pingMs} ms\n` +
+          `┃ *ᴜɢᴀɢᴇ* : ${cpuUsage}\n` +
+          `┃ *ʀᴀᴍ:* [${ramBar}] ${ramPct}%\n` +
+          `┗▣`;
+
+        await Cypher.sendMessage(m.chat, {
+          text: menu,
+          edit: loadingMsg.key,
+        });
+      }
+    },
+    {
+      command: ['runtime', 'uptime'],
     react: "⏱️",
     operate: async ({ Cypher, m, reply }) => {
       const botUptime = runtime(process.uptime());
