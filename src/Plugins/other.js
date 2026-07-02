@@ -208,10 +208,7 @@ module.exports = [
           `┃ *ʀᴀᴍ:* [${ramBar}] ${ramPct}%\n` +
           `┗▣`;
 
-        await Cypher.sendMessage(m.chat, {
-          text: menu,
-          edit: loadingMsg.key,
-        });
+        await Cypher.sendMessage(m.chat, { text: menu }, { quoted: m });
       }
     },
     {
