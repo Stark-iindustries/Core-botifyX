@@ -157,7 +157,7 @@ function cleanOldMessages(db) {
     require('./src/Core/developer');
 
     const { loadDatabase, saveDatabase, loadBlacklist } = require('./src/Core/database');
-    const { checkForUpdates, downloadSessionData, createTmpFolder, detectPlatform } = require('./src/Core/bot');
+    const { downloadSessionData, createTmpFolder, detectPlatform } = require('./src/Core/bot');
     const { processMessage }          = require('./src/Core/executor');
     const { handleGroupParticipants } = require('./src/Core/group');
     const { cleanTmp }                = require('./src/Core/cleaner');
@@ -280,10 +280,6 @@ function cleanOldMessages(db) {
                 console.log(green(`[BOTIFY-X] \u2705 Connected as ${Cypher.user?.name || botNum}`));
                 console.log(cyan(`[BOTIFY-X] Owner     : ${global.creator}`));
                 console.log(cyan(`[BOTIFY-X] Mode      : ${db.settings.mode || 'private'}`));
-
-                checkForUpdates()
-                    .then(msg => console.log(yellow(`[BOTIFY-X] ${msg}`)))
-                    .catch(() => {});
 
                 cleanTmp();
             }
