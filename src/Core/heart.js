@@ -1,6 +1,7 @@
 const {
     proto,
-    getContentType
+    getContentType,
+    jidNormalizedUser
 } = require('@whiskeysockets/baileys')
 
 const heart = (Cypher, m) => {
@@ -16,8 +17,8 @@ const heart = (Cypher, m) => {
         m.chat = m.key.remoteJid
         m.fromMe = m.key.fromMe
         m.isGroup = m.chat.endsWith('@g.us')
-        m.sender = Cypher.decodeJid(m.fromMe && Cypher.user.id || m.participant || m.key.participant || m.chat || '')
-        if (m.isGroup) m.participant = Cypher.decodeJid(m.key.participant) || ''
+        m.sender = jidNormalizedUser(m.fromMe && Cypher.user.id || m.participant || m.key.participant || m.chat || '')
+        if (m.isGroup) m.participant = jidNormalizedUser(m.key.participant) || ''
     }
     if (m.message) {
         m.mtype = getContentType(m.message)
@@ -66,7 +67,7 @@ if (m.quoted) {
             if (m.msg && m.msg.contextInfo) {
                 m.quoted.id = m.msg.contextInfo.stanzaId;
                 m.quoted.chat = m.msg.contextInfo.remoteJid || m.chat;
-                m.quoted.sender = Cypher.decodeJid(m.msg.contextInfo.participant);
+                m.quoted.sender = jidNormalizedUser(m.msg.contextInfo.participant);
                 m.quoted.fromMe = m.quoted.sender === (Cypher.user && Cypher.user.id);
                 m.quoted.mentionedJid = m.msg.contextInfo.mentionedJid || [];
             } else {
