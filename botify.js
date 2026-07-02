@@ -23,77 +23,70 @@ function writeEnvKey(key, value) {
     fs.writeFileSync(ENV_FILE, lines.join('\n'), 'utf8');
 }
 
-// ── Platform check — which platforms allow interactive console input ───────────
+// ── Platform: which environments support interactive console input ─────────────
 function canPromptInteractively() {
     const e = process.env;
     const isCloudNoConsole = !!(
         e.RAILWAY_SERVICE_ID || e.RAILWAY_STATIC_URL ||
         e.DYNO || e.RENDER || e.KOYEB_APP_NAME || e.FLY_APP_NAME
     );
-    return !isCloudNoConsole; // Pterodactyl, Termux, Local all support input
+    return !isCloudNoConsole;
 }
 
-// ── 2. Session ID prompt (raw stdin — no readline, avoids ERR_USE_AFTER_CLOSE) ─
+// ── 2. Session ID prompt ──────────────────────────────────────────────────────
+// Uses fs.readSync(fd=0) — a raw BLOCKING read directly on stdin file descriptor.
+// This bypasses Node.js stream events entirely. On Pterodactyl/Katabump the
+// stream API fires 'end' immediately at startup (WebSocket not yet attached),
+// but the underlying FD 0 stays connected. readSync blocks until the user
+// actually pastes something, then returns. No stream events, no crashes.
 function promptForSessionId() {
     return new Promise((resolve, reject) => {
-        const TIMEOUT_MS = 300000; // 5 min
-
         process.stdout.write(red('\nPlease wait for a few seconds to enter your session id!\n'));
         process.stdout.write(cyan('[BOTIFY-X] Session ID format: BOTIFY-X=<base64string>\n'));
-        process.stdout.write('\nPaste Session ID \u2192 ');
+        process.stdout.write('\nPaste Session ID → ');
 
-        let buf      = '';
-        let settled  = false;
-
-        const done = (err, val) => {
-            if (settled) return;
-            settled = true;
-            clearTimeout(timer);
-            process.stdin.removeListener('data',  onData);
-            process.stdin.removeListener('end',   onEnd);
-            process.stdin.removeListener('error', onError);
-            try { process.stdin.pause(); } catch (_) {}
-            if (err) reject(err); else resolve(val);
+        const readLineBlocking = () => {
+            const buf = Buffer.allocUnsafe(4096);
+            let n;
+            try {
+                n = fs.readSync(0, buf, 0, 4096, null);
+            } catch (e) {
+                return null;
+            }
+            if (!n) return null;
+            return buf.slice(0, n).toString('utf8').split('\n')[0].trim();
         };
 
-        const onData = (chunk) => {
-            buf += chunk.toString();
-            const nl = buf.indexOf('\n');
-            if (nl === -1) return;
-            const id   = buf.slice(0, nl).trim();
-            buf = buf.slice(nl + 1);
+        const attempt = () => {
+            const id = readLineBlocking();
 
-            if (!id) {
-                process.stdout.write(red('[BOTIFY-X] Nothing entered. Try again.\n\n'));
-                process.stdout.write('Paste Session ID \u2192 ');
+            if (id === null) {
+                reject(new Error('stdin FD closed — cannot read session ID'));
                 return;
             }
+
+            if (!id) {
+                process.stdout.write(red('[BOTIFY-X] Nothing entered. Try again.\n'));
+                process.stdout.write('Paste Session ID → ');
+                setImmediate(attempt);
+                return;
+            }
+
             if (!id.startsWith('BOTIFY-X=') && !id.startsWith('MEGA-')) {
-                process.stdout.write(red('[BOTIFY-X] \u274c Invalid format. Must start with BOTIFY-X= or MEGA-\n\n'));
-                process.stdout.write('Paste Session ID \u2192 ');
+                process.stdout.write(red('[BOTIFY-X] \u274c Invalid format. Must start with BOTIFY-X= or MEGA-\n'));
+                process.stdout.write('Paste Session ID → ');
+                setImmediate(attempt);
                 return;
             }
 
             writeEnvKey('SESSION_ID', id);
             process.env.SESSION_ID = id;
             process.stdout.write(green('[BOTIFY-X] \u2705 Session ID saved.\n\n'));
-            done(null, id);
+            resolve(id);
         };
 
-        const onEnd   = () => done(new Error('stdin closed before session ID was entered'));
-        const onError = (e) => done(e);
-
-        const timer = setTimeout(() => done(new Error('Timed out waiting for session ID (5 min)')), TIMEOUT_MS);
-
-        try {
-            process.stdin.resume();
-            process.stdin.setEncoding('utf8');
-            process.stdin.on('data',  onData);
-            process.stdin.on('end',   onEnd);
-            process.stdin.on('error', onError);
-        } catch (e) {
-            done(e);
-        }
+        // setImmediate lets any queued console output flush before we block
+        setImmediate(attempt);
     });
 }
 
@@ -233,9 +226,9 @@ function cleanOldMessages(db) {
     // ── Database migration ─────────────────────────────────────────────────────
     console.log(cyan('[BOTIFY-X] \uD83D\uDD27 Migrating old database schema...'));
     migrateDatabase(db);
-    console.log(green('[BOTIFY-X] \u2705Database migration complete'));
+    console.log(green('[BOTIFY-X] \u2705 Database migration complete'));
 
-    const cbCleaned = cleanChatbotMessages(db);
+    cleanChatbotMessages(db);
     console.log(cyan('[BOTIFY-X] Cleaned up chatbot messages older than 1 days.'));
 
     console.log(cyan('[BOTIFY-X] Starting 2/3...'));
