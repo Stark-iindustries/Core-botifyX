@@ -883,6 +883,17 @@ await reply(`+${userToRemove.split('@')[0]} is not in the sudo list.`);
     }
 },
 {
+  command: ['update', 'checkupdate'],
+  operate: async ({ isCreator, reply }) => {
+    if (!isCreator) return reply('❌ Only the owner can trigger an update check.');
+    if (typeof process.send !== 'function') {
+      return reply('⚠️ Update trigger unavailable — this Core isn\'t running under the BotifyX bootstrap (no IPC channel to it).');
+    }
+    reply('🔄 Checking for updates now...');
+    process.send({ type: 'checkUpdate' });
+  }
+},
+{
   command: ['resetsetting'],
   operate: async ({ reply, args, prefix, command, db, isCreator }) => {
     if (!isCreator) return reply("Only the owner can reset settings.");
