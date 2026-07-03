@@ -215,7 +215,30 @@ module.exports = [
           `┃ *ʀᴀᴍ:* [${ramBar}] ${ramPct}%\n` +
           `┗▣`;
 
-        await Cypher.sendMessage(m.chat, { text: menu }, { quoted: m });
+        // Build the categorized command list live from global.plugins every call —
+        // never hardcoded. Each plugin object is tagged with `_category` (derived
+        // from its source file name) when loaded in botify.js.
+        const live = Array.isArray(plugins) ? plugins : (global.plugins || []);
+        const categories = new Map();
+        for (const p of live) {
+            if (!p || !p.command) continue;
+            const cat  = p._category || 'OTHER';
+            const cmds = Array.isArray(p.command) ? p.command : [p.command];
+            if (!categories.has(cat)) categories.set(cat, new Set());
+            const set = categories.get(cat);
+            cmds.forEach(c => { if (c) set.add(String(c).toLowerCase()); });
+        }
+
+        let commandList = '';
+        for (const cat of [...categories.keys()].sort()) {
+            commandList += `\n╭───「 *${cat} MENU* 」\n`;
+            for (const cmd of [...categories.get(cat)].sort()) {
+                commandList += `│ ➽ ${prefix}${cmd}\n`;
+            }
+            commandList += `╰────────────\n`;
+        }
+
+        await Cypher.sendMessage(m.chat, { text: menu + '\n' + commandList }, { quoted: m });
       }
     },
     {
