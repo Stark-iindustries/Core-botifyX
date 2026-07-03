@@ -194,7 +194,17 @@ function cleanOldMessages(db) {
     for (const file of pluginFiles) {
         try {
             const mod = require(path.join(PLUGIN_DIR, file));
-            if (Array.isArray(mod)) plugins.push(...mod);
+            if (Array.isArray(mod)) {
+                // Tag each command with a category derived from its source file so
+                // `.menu` can group commands live, without any hardcoded list.
+                const category = file.replace(/\.js$/i, '').toUpperCase();
+                for (const cmdObj of mod) {
+                    if (cmdObj && typeof cmdObj === 'object' && !cmdObj._category) {
+                        cmdObj._category = category;
+                    }
+                }
+                plugins.push(...mod);
+            }
         } catch (e) {
             console.error(red(`[BOTIFY-X] Plugin load error (${file}): ${e.message}`));
         }
@@ -234,6 +244,26 @@ function cleanOldMessages(db) {
     console.log(cyan('[BOTIFY-X] Starting 2/3...'));
     console.log(cyan(`[BOTIFY-X] Platform : ${detectPlatform()}`));
     console.log(cyan(`[BOTIFY-X] Node.js  : ${process.version}`));
+
+    // ── Listen for update results from the BotifyX bootstrap (parent process) ───
+    // Lets the `.update` command give real feedback in WhatsApp instead of only
+    // the console, since the bootstrap is the one that actually checks/applies.
+    if (typeof process.send === 'function') {
+        process.on('message', async (msg) => {
+            if (!msg || msg.type !== 'updateResult') return;
+            try {
+                const target = global.creator;
+                if (!target || !global.Cypher) return;
+                if (!msg.ok) {
+                    await global.Cypher.sendMessage(target, { text: `⚠️ Update check failed: ${msg.message || 'unknown error'}` });
+                } else if (msg.updating) {
+                    await global.Cypher.sendMessage(target, { text: `🔄 Update found (v${msg.latest}) — applying now. The bot will restart shortly.` });
+                } else {
+                    await global.Cypher.sendMessage(target, { text: `✅ Already up to date (v${msg.installed || msg.latest}).` });
+                }
+            } catch (_) {}
+        });
+    }
 
     let retryCount = 0;
     const MAX_RETRIES = 5;
@@ -282,6 +312,23 @@ function cleanOldMessages(db) {
                 console.log(cyan(`[BOTIFY-X] Mode      : ${db.settings.mode || 'private'}`));
 
                 cleanTmp();
+
+                // ── Send a status message to "Message Yourself" on successful connect ─
+                try {
+                    let botVersion = 'unknown';
+                    try { botVersion = require('./package.json').version || 'unknown'; } catch (_) {}
+                    const statusMsg =
+                        `┏▣ ◈ *BOTIFY-X CONNECTED* ◈\n` +
+                        `┃ *ᴜsᴇʀ* : ${Cypher.user?.name || botNum}\n` +
+                        `┃ *ᴘʟᴀᴛғᴏʀᴍ* : ${detectPlatform()}\n` +
+                        `┃ *ᴘʀᴇғɪˣ* : ${db.settings.prefix ?? '.'}\n` +
+                        `┃ *ᴍᴏᴅᴇ* : ${db.settings.mode || 'private'}\n` +
+                        `┃ *ᴠᴇʀsɪᴏɴ* : v${botVersion}\n` +
+                        `┗▣\n\n` +
+                        `👉 Telegram: https://t.me/+yxIy3nwj6Ig4YjM0\n` +
+                        `📢 Channel: https://t.me/botifyxspace`;
+                    await Cypher.sendMessage(global.creator, { text: statusMsg });
+                } catch (_) {}
             }
 
             if (connection === 'close') {
