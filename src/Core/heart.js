@@ -9,11 +9,14 @@ const heart = (Cypher, m) => {
     let M = proto.WebMessageInfo
     if (m.key) {
         m.id = m.key.id
+        // Only flag as a bot-generated echo when it actually matches Baileys' own
+        // outgoing ID signature AND was sent by us. A broad length-only check here
+        // used to also drop real user/owner messages (e.g. in groups) whose IDs
+        // simply weren't 32 or 20 chars long.
         m.isBaileys =
-  (m.id.startsWith('BAE5') && m.id.length === 16) ||
-  (m.id.startsWith('3EB0') && m.id.length === 22) ||
-  (!m.id.startsWith('3EB0') && m.id.length === 22) ||
-  (m.id.length !== 32 && m.id.length !== 20);
+  !!m.key.fromMe &&
+  ((m.id.startsWith('BAE5') && m.id.length === 16) ||
+   (m.id.startsWith('3EB0') && m.id.length === 22));
         m.chat = m.key.remoteJid
         m.fromMe = m.key.fromMe
         m.isGroup = m.chat.endsWith('@g.us')
@@ -78,11 +81,9 @@ if (m.quoted) {
                 m.quoted.mentionedJid = [];
             }
 
-            m.quoted.isBaileys = m.quoted.id
-  ? m.quoted.id.startsWith('BAE5') || 
-    m.quoted.id.startsWith('3EB0') && m.quoted.id.length === 22 || 
-    (!m.quoted.id.startsWith('3EB0') && m.quoted.id.length === 22) ||
-    (m.quoted.id.length !== 32 && m.quoted.id.length !== 20)
+            m.quoted.isBaileys = (m.quoted.id && m.quoted.fromMe)
+  ? ((m.quoted.id.startsWith('BAE5') && m.quoted.id.length === 16) ||
+     (m.quoted.id.startsWith('3EB0') && m.quoted.id.length === 22))
   : false;
             m.quoted.text = m.quoted.text || m.quoted.caption || m.quoted.conversation || m.quoted.contentText || m.quoted.selectedDisplayText || m.quoted.title || '';
 
