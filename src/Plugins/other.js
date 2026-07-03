@@ -233,7 +233,7 @@ module.exports = [
         for (const cat of [...categories.keys()].sort()) {
             commandList += `\n╭───「 *${cat} MENU* 」\n`;
             for (const cmd of [...categories.get(cat)].sort()) {
-                commandList += `│ ➽ ${prefix}${cmd}\n`;
+                commandList += `│ ➽ ${cmd}\n`;
             }
             commandList += `╰────────────\n`;
         }
