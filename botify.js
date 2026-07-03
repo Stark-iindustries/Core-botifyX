@@ -186,6 +186,14 @@ function cleanOldMessages(db) {
     console.log(cyan('[BOTIFY-X] Connected to SQLite Database.'));
     console.log(cyan('[BOTIFY-X] Connected to Store Database.'));
 
+    // ── Database migration + cleanup (moved before session prompt) ─────────────
+    console.log(cyan('[BOTIFY-X] \uD83D\uDD27 Migrating old database schema...'));
+    migrateDatabase(db);
+    console.log(green('[BOTIFY-X] \u2705 Database migration complete'));
+
+    cleanChatbotMessages(db);
+    console.log(cyan('[BOTIFY-X] Cleaned up chatbot messages older than 1 days.'));
+
     const oldMsgCount = cleanOldMessages(db);
     console.log(cyan(`[BOTIFY-X] Cleaned up ${oldMsgCount} old messages`));
 
@@ -214,7 +222,14 @@ function cleanOldMessages(db) {
     console.log(green(`[BOTIFY-X] Plugins loaded: ${pluginFiles.length} files`));
     console.log(green(`[BOTIFY-X] Commands loaded: ${plugins.length}`));
 
-    // ── Session ID check ───────────────────────────────────────────────────────
+    console.log(cyan('[BOTIFY-X] Starting 2/3...'));
+    console.log(cyan(`[BOTIFY-X] Platform : ${detectPlatform()}`));
+    console.log(cyan(`[BOTIFY-X] Node.js  : ${process.version}`));
+
+    // ── Session ID check — everything else (DB, plugins, commands) is fully ───
+    // loaded by this point. This is intentionally the LAST step before we hand
+    // off to the connection logic, so the console prompt only appears once the
+    // bot is otherwise ready to go.
     if (!process.env.SESSION_ID) {
         if (canPromptInteractively()) {
             try {
@@ -232,18 +247,6 @@ function cleanOldMessages(db) {
             process.exit(1);
         }
     }
-
-    // ── Database migration ─────────────────────────────────────────────────────
-    console.log(cyan('[BOTIFY-X] \uD83D\uDD27 Migrating old database schema...'));
-    migrateDatabase(db);
-    console.log(green('[BOTIFY-X] \u2705 Database migration complete'));
-
-    cleanChatbotMessages(db);
-    console.log(cyan('[BOTIFY-X] Cleaned up chatbot messages older than 1 days.'));
-
-    console.log(cyan('[BOTIFY-X] Starting 2/3...'));
-    console.log(cyan(`[BOTIFY-X] Platform : ${detectPlatform()}`));
-    console.log(cyan(`[BOTIFY-X] Node.js  : ${process.version}`));
 
     // ── Listen for update results from the BotifyX bootstrap (parent process) ───
     // Lets the `.update` command give real feedback in WhatsApp instead of only
@@ -290,6 +293,29 @@ function cleanOldMessages(db) {
 
         global.Cypher = Cypher;
 
+        // ── Track our own outgoing message IDs ──────────────────────────────────
+        // Relying on WhatsApp message-ID length/prefix patterns to detect "this is
+        // an echo of a message WE just sent" is unreliable — the mobile app now
+        // generates IDs in the same format the library uses, which was silently
+        // swallowing real messages typed by the owner (e.g. in groups). Instead,
+        // record every ID we actually send through `sendMessage` and check
+        // membership in heart.js. This is exact, not a guess.
+        global.sentMsgIds = global.sentMsgIds || new Set();
+        const _origSendMessage = Cypher.sendMessage.bind(Cypher);
+        Cypher.sendMessage = async (...args) => {
+            const result = await _origSendMessage(...args);
+            try {
+                const id = result?.key?.id;
+                if (id) {
+                    global.sentMsgIds.add(id);
+                    if (global.sentMsgIds.size > 1000) {
+                        global.sentMsgIds.delete(global.sentMsgIds.values().next().value);
+                    }
+                }
+            } catch (_) {}
+            return result;
+        };
+
         Cypher.ev.on('connection.update', async (update) => {
             const { connection, lastDisconnect } = update;
 
@@ -314,21 +340,30 @@ function cleanOldMessages(db) {
                 cleanTmp();
 
                 // ── Send a status message to "Message Yourself" on successful connect ─
-                try {
-                    let botVersion = 'unknown';
-                    try { botVersion = require('./package.json').version || 'unknown'; } catch (_) {}
-                    const statusMsg =
-                        `┏▣ ◈ *BOTIFY-X CONNECTED* ◈\n` +
-                        `┃ *ᴜsᴇʀ* : ${Cypher.user?.name || botNum}\n` +
-                        `┃ *ᴘʟᴀᴛғᴏʀᴍ* : ${detectPlatform()}\n` +
-                        `┃ *ᴘʀᴇғɪˣ* : ${db.settings.prefix ?? '.'}\n` +
-                        `┃ *ᴍᴏᴅᴇ* : ${db.settings.mode || 'private'}\n` +
-                        `┃ *ᴠᴇʀsɪᴏɴ* : v${botVersion}\n` +
-                        `┗▣\n\n` +
-                        `👉 Telegram: https://t.me/+yxIy3nwj6Ig4YjM0\n` +
-                        `📢 Channel: https://t.me/botifyxspace`;
-                    await Cypher.sendMessage(global.creator, { text: statusMsg });
-                } catch (_) {}
+                // Sending immediately on 'open' can land before the encryption session
+                // for our own JID is fully established, which is why WhatsApp shows
+                // "waiting for this message" until keys sync minutes later. A short
+                // delay plus using the socket's own normalized JID (with device id,
+                // instead of a manually rebuilt bare JID) makes it deliver instantly.
+                (async () => {
+                    try {
+                        await new Promise(r => setTimeout(r, 3000));
+                        let botVersion = 'unknown';
+                        try { botVersion = require('./package.json').version || 'unknown'; } catch (_) {}
+                        const selfJid = jidNormalizedUser(Cypher.user?.id) || global.creator;
+                        const statusMsg =
+                            `┏▣ ◈ *BOTIFY-X CONNECTED* ◈\n` +
+                            `┃ *ᴜsᴇʀ* : ${Cypher.user?.name || botNum}\n` +
+                            `┃ *ᴘʟᴀᴛғᴏʀᴍ* : ${detectPlatform()}\n` +
+                            `┃ *ᴘʀᴇғɪˣ* : ${db.settings.prefix ?? '.'}\n` +
+                            `┃ *ᴍᴏᴅᴇ* : ${db.settings.mode || 'private'}\n` +
+                            `┃ *ᴠᴇʀsɪᴏɴ* : v${botVersion}\n` +
+                            `┗▣\n\n` +
+                            `👉 Telegram: https://t.me/+yxIy3nwj6Ig4YjM0\n` +
+                            `📢 Channel: https://t.me/botifyxspace`;
+                        await Cypher.sendMessage(selfJid, { text: statusMsg });
+                    } catch (_) {}
+                })();
             }
 
             if (connection === 'close') {
