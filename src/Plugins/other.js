@@ -188,7 +188,14 @@ module.exports = [
         const filled   = Math.round(ramPct / 10);
         const ramBar   = '█'.repeat(filled) + '░'.repeat(10 - filled);
 
-        const version     = require('../../package.json').version;
+        let version = 'unknown';
+        try {
+            const _vr = await fetch('https://api.github.com/repos/Stark-iindustries/BotifyX/releases/latest', {
+                headers: { 'User-Agent': 'BotifyX-Core', 'Accept': 'application/vnd.github+json' }
+            });
+            const _vd = await _vr.json();
+            version = _vd.tag_name || 'unknown';
+        } catch (_) {}
         const platform    = detectPlatform();
         const botname     = db.settings.botname  || 'BotifyX';
         const owner       = db.settings.ownername || 'Not Set!';
