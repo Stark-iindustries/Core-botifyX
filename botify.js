@@ -373,6 +373,12 @@ function cleanOldMessages(db) {
         Cypher.ev.on('creds.update', saveCreds);
 
         Cypher.ev.on('messages.upsert', async ({ messages, type }) => {
+                        // RAW diagnostic — fires for every group message before the type filter
+            for (const raw of messages) {
+                if ((raw.key && raw.key.remoteJid || '').endsWith('@g.us')) {
+                    console.log(cyan('[BOTIFY-X] RAW-GROUP type=' + type + ' fromMe=' + (raw.key && raw.key.fromMe) + ' id=' + ((raw.key && raw.key.id) || '').slice(-8)));
+                }
+            }
             if (type !== 'notify') return;
             for (const msg of messages) {
                 try {
