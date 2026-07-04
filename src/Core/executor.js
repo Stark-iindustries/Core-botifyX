@@ -88,12 +88,8 @@ async function processMessage(Cypher, msg, db, plugins, saveDatabase, loadBlackl
             if (allowed.length > 0 && !allowed.some(c => senderCode.startsWith(c))) return;
         }
 
-        // 4. Owner / sudo check
-        const ownerJid  = global.creator || '';
-        const isSudo    = Array.isArray(db.sudo) && db.sudo.includes(sender);
-        const isCreator = sender === ownerJid || isSudo;
-
-        // 5. Group metadata
+        // 4. Group metadata (fetched before the owner check so we can resolve
+        //    @lid participant identities back to a phone number — see below)
         let groupMetadata = null;
         let isAdmins      = false;
         let isBotAdmins   = false;
@@ -111,6 +107,32 @@ async function processMessage(Cypher, msg, db, plugins, saveDatabase, loadBlackl
             initChatEntry(chat);
             // Track messages for active-user stats
             GroupDB.addMessage(chat, sender);
+        }
+
+        // 5. Owner / sudo check
+        // WhatsApp now sometimes reports group participants using the newer
+        // "@lid" identity instead of the classic phone-number JID
+        // ("@s.whatsapp.net"). When that happens, `sender` (built from
+        // m.key.participant) no longer string-matches `global.creator`
+        // (built from the phone number), so the bot's own owner would be
+        // silently treated as a stranger inside that group. Fix: if a direct
+        // match fails, look up the matching participant entry in group
+        // metadata (which carries BOTH the `.id` and `.lid` forms for the
+        // same person) and compare phone numbers instead.
+        const ownerJid  = global.creator || '';
+        const isSudo    = Array.isArray(db.sudo) && db.sudo.includes(sender);
+        let   isCreator = sender === ownerJid || isSudo;
+
+        if (!isCreator && isGroup && groupMetadata && global.ownernumber) {
+            const participant = (groupMetadata.participants || []).find(p => p.id === sender || p.lid === sender);
+            if (participant) {
+                const phoneForm = [participant.id, participant.lid]
+                    .filter(Boolean)
+                    .find(j => j.endsWith('@s.whatsapp.net'));
+                if (phoneForm && phoneForm.split('@')[0] === global.ownernumber) {
+                    isCreator = true;
+                }
+            }
         }
 
         // 6. Mode check (before auto-features so typing still triggers)
@@ -297,3 +319,4 @@ async function processMessage(Cypher, msg, db, plugins, saveDatabase, loadBlackl
 }
 
 module.exports = { processMessage };
+
