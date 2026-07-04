@@ -24,30 +24,50 @@ const heart = (Cypher, m) => {
     }
     if (m.message) {
         m.mtype = getContentType(m.message)
-        m.msg = (m.mtype == 'viewOnceMessage' ? m.message[m.mtype].message[getContentType(m.message[m.mtype].message)] : m.message[m.mtype])
 
-     m.body =
-  m.message?.protocolMessage?.editedMessage?.conversation || 
-  m.message?.protocolMessage?.editedMessage?.extendedTextMessage?.text ||
-  m.message?.protocolMessage?.editedMessage?.imageMessage?.caption ||
-  m.message?.protocolMessage?.editedMessage?.videoMessage?.caption || 
-  m.message?.conversation ||
-  m.message?.imageMessage?.caption ||
-  m.message?.videoMessage?.caption ||
-  m.message?.extendedTextMessage?.text ||
-  m.message?.buttonsResponseMessage?.selectedButtonId ||
-  m.message?.listResponseMessage?.singleSelectReply?.selectedRowId ||
-  m.message?.templateButtonReplyMessage?.selectedId ||
-  m.message?.pollCreationMessageV3?.name || 
-  m.message?.documentMessage?.caption ||
-  m.text || ""; 
+        // ── Unwrap outer message layers ───────────────────────────────────────────
+        // WhatsApp wraps messages in these container types when certain features
+        // are active in a chat:
+        //   ephemeralMessage            → disappearing / timed messages (common in groups)
+        //   viewOnceMessageV2           → second-generation view-once media
+        //   documentWithCaptionMessage  → document + caption combo
+        // Without unwrapping, every field in the body extraction below resolves to
+        // undefined, body becomes '', isCmd = false, and ALL commands are silently
+        // dropped — giving the appearance that the bot "doesn't respond in groups"
+        // when disappearing messages are enabled.
+        const WRAPPER_TYPES = ['ephemeralMessage', 'viewOnceMessageV2', 'documentWithCaptionMessage'];
+        let innerMessage = m.message;
+        if (WRAPPER_TYPES.includes(m.mtype) && m.message[m.mtype]?.message) {
+            innerMessage = m.message[m.mtype].message;
+            m.mtype = getContentType(innerMessage) || m.mtype;
+        }
 
-       m.budy = 
-  typeof m.body === "string" && m.body.length > 0 
-    ? m.body 
-    : typeof m.text === "string" 
-      ? m.text 
-      : "";
+        m.msg = (m.mtype == 'viewOnceMessage'
+            ? innerMessage[m.mtype]?.message?.[getContentType(innerMessage[m.mtype]?.message)]
+            : innerMessage[m.mtype])
+
+        m.body =
+          m.message?.protocolMessage?.editedMessage?.conversation ||
+          m.message?.protocolMessage?.editedMessage?.extendedTextMessage?.text ||
+          m.message?.protocolMessage?.editedMessage?.imageMessage?.caption ||
+          m.message?.protocolMessage?.editedMessage?.videoMessage?.caption ||
+          innerMessage?.conversation ||
+          innerMessage?.imageMessage?.caption ||
+          innerMessage?.videoMessage?.caption ||
+          innerMessage?.extendedTextMessage?.text ||
+          m.message?.buttonsResponseMessage?.selectedButtonId ||
+          m.message?.listResponseMessage?.singleSelectReply?.selectedRowId ||
+          m.message?.templateButtonReplyMessage?.selectedId ||
+          m.message?.pollCreationMessageV3?.name ||
+          innerMessage?.documentMessage?.caption ||
+          m.text || "";
+
+       m.budy =
+          typeof m.body === "string" && m.body.length > 0
+            ? m.body
+            : typeof m.text === "string"
+              ? m.text
+              : "";
 
 let quoted = m.quoted = (m.msg && m.msg.contextInfo) ? m.msg.contextInfo.quotedMessage : null;
 m.mentionedJid = (m.msg && m.msg.contextInfo) ? m.msg.contextInfo.mentionedJid || [] : [];
@@ -113,9 +133,9 @@ if (m.quoted) {
 m.text = m.msg ? (m.msg.text || m.msg.caption || m.message.conversation || m.msg.contentText || m.msg.selectedDisplayText || m.msg.title || '') : '';
     /**
      * Reply to this message
-     * @param {String|Object} text 
-     * @param {String|false} chatId 
-     * @param {Object} options 
+     * @param {String|Object} text
+     * @param {String|false} chatId
+     * @param {Object} options
      */
     m.reply = (text, chatId = m.chat, options = {}) => Buffer.isBuffer(text) ? Cypher.sendFile(chatId, text, 'file', '', m, {
         ...options
@@ -128,11 +148,11 @@ m.text = m.msg ? (m.msg.text || m.msg.caption || m.message.conversation || m.msg
     m.copy = () => heart(Cypher, M.fromObject(M.toObject(m)))
 
     /**
-     * 
-     * @param {*} jid 
-     * @param {*} forceForward 
-     * @param {*} options 
-     * @returns 
+     *
+     * @param {*} jid
+     * @param {*} forceForward
+     * @param {*} options
+     * @returns
      */
     m.copyNForward = (jid = m.chat, forceForward = false, options = {}) => Cypher.copyNForward(jid, m, forceForward, options)
 
