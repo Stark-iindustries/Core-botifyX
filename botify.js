@@ -161,6 +161,7 @@ function cleanOldMessages(db) {
     const { processMessage }          = require('./src/Core/executor');
     const { handleGroupParticipants } = require('./src/Core/group');
     const { cleanTmp }                = require('./src/Core/cleaner');
+    const { sendConnectionMessage }   = require('./src/Core/connection');
     const { color }                   = require('./lib/color');
 
     const {
@@ -340,30 +341,8 @@ function cleanOldMessages(db) {
                 cleanTmp();
 
                 // ── Send a status message to "Message Yourself" on successful connect ─
-                // Sending immediately on 'open' can land before the encryption session
-                // for our own JID is fully established, which is why WhatsApp shows
-                // "waiting for this message" until keys sync minutes later. A short
-                // delay plus using the socket's own normalized JID (with device id,
-                // instead of a manually rebuilt bare JID) makes it deliver instantly.
-                (async () => {
-                    try {
-                        await new Promise(r => setTimeout(r, 3000));
-                        let botVersion = 'unknown';
-                        try { botVersion = require('./package.json').version || 'unknown'; } catch (_) {}
-                        const selfJid = jidNormalizedUser(Cypher.user?.id) || global.creator;
-                        const statusMsg =
-                            `┏▣ ◈ *BOTIFY-X CONNECTED* ◈\n` +
-                            `┃ *ᴜsᴇʀ* : ${Cypher.user?.name || botNum}\n` +
-                            `┃ *ᴘʟᴀᴛғᴏʀᴍ* : ${detectPlatform()}\n` +
-                            `┃ *ᴘʀᴇғɪˣ* : ${db.settings.prefix ?? '.'}\n` +
-                            `┃ *ᴍᴏᴅᴇ* : ${db.settings.mode || 'private'}\n` +
-                            `┃ *ᴠᴇʀsɪᴏɴ* : v${botVersion}\n` +
-                            `┗▣\n\n` +
-                            `👉 Telegram: https://t.me/+yxIy3nwj6Ig4YjM0\n` +
-                            `📢 Channel: https://t.me/botifyxspace`;
-                        await Cypher.sendMessage(selfJid, { text: statusMsg });
-                    } catch (_) {}
-                })();
+                // See src/Core/connection.js for the message content/logic.
+                sendConnectionMessage(Cypher, db, detectPlatform);
             }
 
             if (connection === 'close') {
@@ -465,3 +444,4 @@ function cleanOldMessages(db) {
 
     await downloadSessionData(startBot);
 })();
+
