@@ -9,14 +9,14 @@ const { initChatEntry, saveBlacklist } = require('./database');
 const GroupDB                          = require('./group');
 const { color }                        = require('../../lib/color');
 
-const kickQueue  = new Map();
-const msgCache   = new Map();
+const kickQueue = new Map();
+const msgCache  = new Map();
 
 function loadBadWords() {
-    const badPath = path.join(__dirname, '../../src/Database/badwords.json');
+    const p = path.join(__dirname, '../../src/Database/badwords.json');
     try {
-        if (!fs.existsSync(badPath)) { fs.writeFileSync(badPath, JSON.stringify([], null, 2)); return []; }
-        return JSON.parse(fs.readFileSync(badPath, 'utf8'));
+        if (!fs.existsSync(p)) { fs.writeFileSync(p, '[]'); return []; }
+        return JSON.parse(fs.readFileSync(p, 'utf8'));
     } catch (_) { return []; }
 }
 
@@ -37,45 +37,35 @@ function buildWarnHandler(Cypher, m, db, saveDatabase) {
         if (count >= limit) {
             chat.warnings[user] = 0;
             await Cypher.groupParticipantsUpdate(m.chat, [user], 'remove').catch(() => {});
-            await Cypher.sendMessage(m.chat, { text: `🚫 @${user.split('@')[0]} has been kicked after ${limit} warnings.`, mentions: [user] });
+            await Cypher.sendMessage(m.chat, { text: `🚫 @${user.split('@')[0]} kicked after ${limit} warnings.`, mentions: [user] });
         }
         saveDatabase();
     };
 }
+
+// Strip @domain suffix — normalises @s.whatsapp.net, @lid, @g.us etc.
+// to a plain number string so comparisons never fail on domain mismatch.
+function numOnly(jid) { return (jid || '').replace(/@\S+$/, ''); }
 
 async function processMessage(Cypher, msg, db, plugins, saveDatabase, loadBlacklist) {
     try {
         // ── 1. Parse ──────────────────────────────────────────────────────────
         const m = heart(Cypher, msg);
 
-        // CHECKPOINT A — fires immediately after heart() for every group message,
-        // before ANY other check. If this does NOT appear in console, heart() is
-        // returning null (bad parse) or the message isn't a group message.
+        // CHECKPOINT A — very first thing, before every filter
         const rawGroup = (msg.key?.remoteJid || '').endsWith('@g.us');
         if (rawGroup) {
-            const parsed = m ? 'OK' : 'NULL';
             console.log(color(
-                `[BOTIFY-X] ◆ CHECKPOINT-A` +
-                ` heart=${parsed}` +
-                ` fromMe=${msg.key?.fromMe}` +
-                ` id=${(msg.key?.id || '').slice(-8)}`,
-                'magenta'
-            ));
+                `[BOTIFY-X] ◆ CK-A  heart=${m ? 'OK' : 'NULL'} fromMe=${msg.key?.fromMe} id=${(msg.key?.id || '').slice(-8)}`,
+                'magenta'));
         }
 
         if (!m || !m.message || !m.chat) return;
 
-        // CHECKPOINT B — heart() succeeded, message is valid.
-        // Fires before isBaileys / blacklist / allowed checks.
         if (m.isGroup) {
             console.log(color(
-                `[BOTIFY-X] ◆ CHECKPOINT-B` +
-                ` isBaileys=${m.isBaileys}` +
-                ` sender=${(m.sender || '').split('@')[0]}` +
-                ` creator=${(global.creator || '').split('@')[0]}` +
-                ` body="${(m.body || '').slice(0, 35)}"`,
-                'cyan'
-            ));
+                `[BOTIFY-X] ◆ CK-B  isBaileys=${m.isBaileys} sender=${numOnly(m.sender)} creator=${numOnly(global.creator)} body="${(m.body || '').slice(0, 30)}"`,
+                'cyan'));
         }
 
         if (m.isBaileys) return;
@@ -95,8 +85,8 @@ async function processMessage(Cypher, msg, db, plugins, saveDatabase, loadBlackl
         if (blacklist.blacklisted_numbers.includes(chat))   return;
 
         // ── 3. Autoblock ──────────────────────────────────────────────────────
-        if (!isGroup && db.settings.autoblock && sender !== global.creator) {
-            const senderCode   = sender.replace('@s.whatsapp.net', '');
+        if (!isGroup && db.settings.autoblock && numOnly(sender) !== numOnly(global.creator)) {
+            const senderCode   = numOnly(sender);
             const allowedCodes = db.settings.allowedCodes || [];
             if (allowedCodes.length > 0 && !allowedCodes.some(c => senderCode.startsWith(c))) return;
         }
@@ -121,41 +111,49 @@ async function processMessage(Cypher, msg, db, plugins, saveDatabase, loadBlackl
             GroupDB.addMessage(chat, sender);
         }
 
-        // ── 5. Owner / sudo ───────────────────────────────────────────────────
-        const ownerJid = global.creator || '';
-        const isSudo   = Array.isArray(db.sudo) && db.sudo.includes(sender);
-        // m.fromMe && !m.isBaileys = owner typed this from their own phone,
-        // not a bot echo.  Covers any JID-format mismatch in the string compare.
-        let isCreator = sender === ownerJid || isSudo || (m.fromMe && !m.isBaileys);
+        // ── 5. Owner / sudo / isCreator ───────────────────────────────────────
+        // Comparison strips the @domain suffix so @lid and @s.whatsapp.net
+        // are treated as equal when the numeric part matches.
+        // Example: "178100214202616@lid" === "178100214202616@s.whatsapp.net"
+        //          after numOnly() both become "178100214202616".
+        const ownerJid  = global.creator || '';
+        const isSudo    = Array.isArray(db.sudo) && db.sudo.includes(sender);
+        let   isCreator =
+            (numOnly(sender) && numOnly(ownerJid) && numOnly(sender) === numOnly(ownerJid)) ||
+            isSudo ||
+            (m.fromMe && !m.isBaileys);   // own-session message that isn't a bot echo
 
-        // @lid identity fallback (newer WhatsApp)
+        // @lid group-metadata cross-reference:
+        // If still not matched, look the sender up in groupMetadata.participants.
+        // Each participant has an `id` (phone JID) and possibly a `lid` field.
+        // We try all available JIDs for the participant and compare by number.
         if (!isCreator && isGroup && groupMetadata && global.ownernumber) {
-            const participant = (groupMetadata.participants || []).find(p => p.id === sender || p.lid === sender);
+            const senderN = numOnly(sender);
+            const participant = (groupMetadata.participants || []).find(p => {
+                if (!p) return false;
+                return numOnly(p.id) === senderN || numOnly(p.lid) === senderN;
+            });
             if (participant) {
-                const phoneForm = [participant.id, participant.lid].filter(Boolean)
-                    .find(j => j.endsWith('@s.whatsapp.net'));
-                if (phoneForm && phoneForm.split('@')[0] === global.ownernumber) isCreator = true;
+                // Resolve to the phone-format JID and compare numerically
+                const allJids = [participant.id, participant.lid].filter(Boolean);
+                const matched = allJids.some(j => numOnly(j) === global.ownernumber);
+                if (matched) isCreator = true;
             }
         }
 
-        // ── 6. Mode check ─────────────────────────────────────────────────────
+        if (isGroup) {
+            console.log(color(
+                `[BOTIFY-X] ◆ CK-C  isCreator=${isCreator} mode=${mode} allowed=${
+                    isCreator || mode==='public' || (mode==='group'&&isGroup) || (mode==='pm'&&!isGroup)}`,
+                'cyan'));
+        }
+
+        // ── 6. Mode gate ──────────────────────────────────────────────────────
         const allowed =
             isCreator ||
             mode === 'public' ||
             (mode === 'group' && isGroup) ||
             (mode === 'pm'    && !isGroup);
-
-        // CHECKPOINT C — shows result of the allowed gate
-        if (isGroup) {
-            console.log(color(
-                `[BOTIFY-X] ◆ CHECKPOINT-C` +
-                ` isCreator=${isCreator}` +
-                ` mode=${mode}` +
-                ` allowed=${allowed}`,
-                'cyan'
-            ));
-        }
-
         if (!allowed) return;
 
         // ── 7. Autoread ───────────────────────────────────────────────────────
@@ -196,15 +194,10 @@ async function processMessage(Cypher, msg, db, plugins, saveDatabase, loadBlackl
             : null;
         const isCmd = pfxRe ? pfxRe.test(body) : body.length > 0;
 
-        // CHECKPOINT D — prefix / command detection
         if (isGroup) {
             console.log(color(
-                `[BOTIFY-X] ◆ CHECKPOINT-D` +
-                ` prefix="${prefix}"` +
-                ` body="${body.slice(0, 35)}"` +
-                ` isCmd=${isCmd}`,
-                'cyan'
-            ));
+                `[BOTIFY-X] ◆ CK-D  prefix="${prefix}" body="${body.slice(0,30)}" isCmd=${isCmd}`,
+                'cyan'));
         }
 
         // ── 12. Chatbot ───────────────────────────────────────────────────────
@@ -271,14 +264,14 @@ async function processMessage(Cypher, msg, db, plugins, saveDatabase, loadBlackl
             groupMetadata,
             participants:  groupMetadata?.participants || [],
             isGroupAdmins: isAdmins,
-            isGroupOwner:  groupMetadata?.owner ? sender === groupMetadata.owner : false,
+            isGroupOwner:  groupMetadata?.owner ? numOnly(sender) === numOnly(groupMetadata.owner) : false,
             plugins,
         };
 
         // ── 16. Sticker alias ─────────────────────────────────────────────────
         if (m.msg?.mtype === 'stickerMessage' && db.settings.stickerAliases) {
-            const hash      = [...(m.msg.fileSha256 || [])].toString();
-            const aliasCmd  = db.settings.stickerAliases[hash];
+            const hash     = [...(m.msg.fileSha256 || [])].toString();
+            const aliasCmd = db.settings.stickerAliases[hash];
             if (aliasCmd) {
                 const aliasPlugin = plugins.find(p => {
                     const cmds = Array.isArray(p.command) ? p.command : [p.command];
@@ -287,8 +280,8 @@ async function processMessage(Cypher, msg, db, plugins, saveDatabase, loadBlackl
                 if (aliasPlugin) {
                     try { await aliasPlugin.operate({ ...context, command: aliasCmd }); }
                     catch (e) {
-                        console.error(color(`[BOTIFY-X] Plugin error (${aliasCmd}): ${e.message}`, 'red'));
-                        try { await Cypher.sendMessage(chat, { text: `❌ *Error in* \`${aliasCmd}\`\n${e.message}` }, { quoted: m }); } catch (_) {}
+                        console.error(color(`[BOTIFY-X] Alias error (${aliasCmd}): ${e.message}`, 'red'));
+                        try { await Cypher.sendMessage(chat, { text: `❌ *Error:* \`${aliasCmd}\`\n${e.message}` }, { quoted: m }); } catch (_) {}
                     }
                     saveDatabase();
                     return;
@@ -307,12 +300,12 @@ async function processMessage(Cypher, msg, db, plugins, saveDatabase, loadBlackl
             return;
         }
 
-        // ── 18. Pre-command auto-features ─────────────────────────────────────
+        // ── 18. Pre-command auto features ─────────────────────────────────────
         if (plugin.react && db.settings.autoreact === 'command') {
             await Cypher.sendMessage(chat, { react: { text: plugin.react, key: m.key } }).catch(() => {});
         }
-        if (db.settings.autotype   === 'command') await Cypher.sendPresenceUpdate('composing',  chat).catch(() => {});
-        if (db.settings.autorecord === 'command') await Cypher.sendPresenceUpdate('recording',  chat).catch(() => {});
+        if (db.settings.autotype   === 'command') await Cypher.sendPresenceUpdate('composing', chat).catch(() => {});
+        if (db.settings.autorecord === 'command') await Cypher.sendPresenceUpdate('recording', chat).catch(() => {});
         if (db.settings.autoread   === 'command') await Cypher.readMessages([m.key]).catch(() => {});
 
         // ── 19. Execute ───────────────────────────────────────────────────────
@@ -329,7 +322,7 @@ async function processMessage(Cypher, msg, db, plugins, saveDatabase, loadBlackl
         saveDatabase();
 
     } catch (err) {
-        console.error(color(`[BOTIFY-X] processMessage crash: ${err.message}`, 'red'));
+        console.error(color(`[BOTIFY-X] processMessage crash: ${err.stack || err.message}`, 'red'));
     }
 }
 
