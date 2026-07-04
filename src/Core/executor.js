@@ -97,7 +97,12 @@ async function processMessage(Cypher, msg, db, plugins, saveDatabase, loadBlackl
         if (isGroup) {
             try {
                 groupMetadata = await Cypher.groupMetadata(chat);
-            } catch (_) {}
+            } catch (e) {
+                // Log the failure — do NOT silently swallow it. A failed fetch
+                // means the @lid owner fallback below won't run, which can lock
+                // the owner out of commands in private mode.
+                console.warn(color(`[BOTIFY-X] groupMetadata fetch failed (${chat}): ${e.message}`, 'yellow'));
+            }
             if (groupMetadata) {
                 const admins = getAdmins(groupMetadata.participants || []);
                 isAdmins    = admins.includes(sender);
@@ -274,9 +279,12 @@ async function processMessage(Cypher, msg, db, plugins, saveDatabase, loadBlackl
                     return cmds.includes(aliasCmd);
                 });
                 if (aliasPlugin) {
-                    await aliasPlugin.operate({ ...context, command: aliasCmd }).catch(e =>
-                        console.error(color(`[BOTIFY-X] Plugin error (${aliasCmd}): ${e.message}`, 'red'))
-                    );
+                    try {
+                        await aliasPlugin.operate({ ...context, command: aliasCmd });
+                    } catch (e) {
+                        console.error(color(`[BOTIFY-X] Plugin error (${aliasCmd}): ${e.message}`, 'red'));
+                        try { await Cypher.sendMessage(chat, { text: `❌ *Error in* \`${aliasCmd}\`\n${e.message}` }, { quoted: m }); } catch (_) {}
+                    }
                     saveDatabase();
                     return;
                 }
@@ -309,8 +317,19 @@ async function processMessage(Cypher, msg, db, plugins, saveDatabase, loadBlackl
             await Cypher.readMessages([m.key]).catch(() => {});
         }
 
-        // 23. Execute
-        await plugin.operate(context);
+        // 23. Execute — plugin errors are surfaced in WhatsApp instead of being
+        // swallowed silently, so the user knows something went wrong and can
+        // report the exact message rather than seeing no response at all.
+        try {
+            await plugin.operate(context);
+        } catch (pluginErr) {
+            console.error(color(`[BOTIFY-X] Plugin error (${command}): ${pluginErr.stack || pluginErr.message}`, 'red'));
+            try {
+                await Cypher.sendMessage(chat, {
+                    text: `❌ *Command Error:* \`${command}\`\n_${pluginErr.message}_`,
+                }, { quoted: m });
+            } catch (_) {}
+        }
         saveDatabase();
 
     } catch (err) {
@@ -319,4 +338,3 @@ async function processMessage(Cypher, msg, db, plugins, saveDatabase, loadBlackl
 }
 
 module.exports = { processMessage };
-
