@@ -84,12 +84,11 @@ async function processMessage(Cypher, msg, db, plugins, saveDatabase, loadBlackl
         // 3. Autoblock (country code filter for PMs)
         if (!isGroup && db.settings.autoblock && sender !== global.creator) {
             const senderCode = sender.replace('@s.whatsapp.net', '');
-            const allowed    = db.settings.allowedCodes || [];
-            if (allowed.length > 0 && !allowed.some(c => senderCode.startsWith(c))) return;
+            const allowedCodes = db.settings.allowedCodes || [];
+            if (allowedCodes.length > 0 && !allowedCodes.some(c => senderCode.startsWith(c))) return;
         }
 
-        // 4. Group metadata (fetched before the owner check so we can resolve
-        //    @lid participant identities back to a phone number — see below)
+        // 4. Group metadata
         let groupMetadata = null;
         let isAdmins      = false;
         let isBotAdmins   = false;
@@ -98,9 +97,6 @@ async function processMessage(Cypher, msg, db, plugins, saveDatabase, loadBlackl
             try {
                 groupMetadata = await Cypher.groupMetadata(chat);
             } catch (e) {
-                // Log the failure — do NOT silently swallow it. A failed fetch
-                // means the @lid owner fallback below won't run, which can lock
-                // the owner out of commands in private mode.
                 console.warn(color(`[BOTIFY-X] groupMetadata fetch failed (${chat}): ${e.message}`, 'yellow'));
             }
             if (groupMetadata) {
@@ -108,26 +104,24 @@ async function processMessage(Cypher, msg, db, plugins, saveDatabase, loadBlackl
                 isAdmins    = admins.includes(sender);
                 isBotAdmins = admins.includes(global.botNumber || '');
             }
-            // Init chat entry
             initChatEntry(chat);
-            // Track messages for active-user stats
             GroupDB.addMessage(chat, sender);
         }
 
         // 5. Owner / sudo check
-        // WhatsApp now sometimes reports group participants using the newer
-        // "@lid" identity instead of the classic phone-number JID
-        // ("@s.whatsapp.net"). When that happens, `sender` (built from
-        // m.key.participant) no longer string-matches `global.creator`
-        // (built from the phone number), so the bot's own owner would be
-        // silently treated as a stranger inside that group. Fix: if a direct
-        // match fails, look up the matching participant entry in group
-        // metadata (which carries BOTH the `.id` and `.lid` forms for the
-        // same person) and compare phone numbers instead.
+        // ── Primary: exact JID match ──────────────────────────────────────────
         const ownerJid  = global.creator || '';
         const isSudo    = Array.isArray(db.sudo) && db.sudo.includes(sender);
-        let   isCreator = sender === ownerJid || isSudo;
+        // ── Fallback A: m.fromMe + !isBaileys ────────────────────────────────
+        // If the message came from this session's own phone (fromMe=true) and
+        // is NOT a bot-generated echo (isBaileys=false), it is definitively the
+        // owner typing. This covers any JID-format mismatch between
+        // global.creator and m.sender that would otherwise silently set
+        // isCreator=false in groups — the root cause of "bot never responds in
+        // groups even though DMs work".
+        let isCreator = sender === ownerJid || isSudo || (m.fromMe && !m.isBaileys);
 
+        // ── Fallback B: @lid participant identity (newer WhatsApp) ───────────
         if (!isCreator && isGroup && groupMetadata && global.ownernumber) {
             const participant = (groupMetadata.participants || []).find(p => p.id === sender || p.lid === sender);
             if (participant) {
@@ -140,7 +134,7 @@ async function processMessage(Cypher, msg, db, plugins, saveDatabase, loadBlackl
             }
         }
 
-        // 6. Mode check (before auto-features so typing still triggers)
+        // 6. Mode check
         const allowed =
             isCreator ||
             mode === 'public' ||
@@ -156,22 +150,21 @@ async function processMessage(Cypher, msg, db, plugins, saveDatabase, loadBlackl
         }
 
         // 8. Autotype / Autorecord presence
-        const presenceChat = chat;
         if (db.settings.autotype === 'all' ||
             (db.settings.autotype === 'group' && isGroup) ||
             (db.settings.autotype === 'pm'    && !isGroup)) {
-            await Cypher.sendPresenceUpdate('composing', presenceChat).catch(() => {});
+            await Cypher.sendPresenceUpdate('composing', chat).catch(() => {});
         } else if (db.settings.autorecord === 'all' ||
             (db.settings.autorecord === 'group' && isGroup) ||
             (db.settings.autorecord === 'pm'    && !isGroup)) {
-            await Cypher.sendPresenceUpdate('recording', presenceChat).catch(() => {});
+            await Cypher.sendPresenceUpdate('recording', chat).catch(() => {});
         }
 
         // 9. Antibot check
         await antiBot(Cypher, m, db).catch(() => {});
         await handleBotKickReply(Cypher, m, db).catch(() => {});
 
-        // 10. Autoreact (all / group / pm)
+        // 10. Autoreact
         const emojis    = (db.settings.statusemoji || '🧡').split(',').map(e => e.trim());
         const randEmoji = () => emojis[Math.floor(Math.random() * emojis.length)];
         if (db.settings.autoreact === 'all' ||
@@ -182,11 +175,25 @@ async function processMessage(Cypher, msg, db, plugins, saveDatabase, loadBlackl
             }).catch(() => {});
         }
 
-        // 11. Chatbot (non-command messages)
+        // 11. Body / command detection
         const body  = m.body || '';
         const pfxRe = prefix ? new RegExp(`^[${prefix.replace(/[-[\]{}()*+?.,\\^$|#\s]/g, '\\$&')}]`) : null;
         const isCmd = pfxRe ? pfxRe.test(body) : body.length > 0;
 
+        // ── Diagnostic log (group messages only) — visible in console/panel logs
+        if (isGroup) {
+            console.log(color(
+                `[BOTIFY-X] GROUP ` +
+                `sender=${sender.split('@')[0]} ` +
+                `creator=${ownerJid.split('@')[0]} ` +
+                `fromMe=${m.fromMe} isCreator=${isCreator} ` +
+                `mode=${mode} prefix="${prefix}" ` +
+                `body="${body.slice(0, 40)}" isCmd=${isCmd}`,
+                'cyan'
+            ));
+        }
+
+        // 12. Chatbot (non-command messages)
         if (!isCmd && db.settings.chatbot && !m.isBaileys) {
             try {
                 const GeminiAI = require('../Functions/gemini');
@@ -199,9 +206,9 @@ async function processMessage(Cypher, msg, db, plugins, saveDatabase, loadBlackl
 
         if (!isCmd) return;
 
-        // 12. Extract command + args
-        const rawCmd = prefix ? body.slice(prefix.length).trim() : body.trim();
-        const parts  = rawCmd.split(/\s+/);
+        // 13. Extract command + args
+        const rawCmd  = prefix ? body.slice(prefix.length).trim() : body.trim();
+        const parts   = rawCmd.split(/\s+/);
         const command = (parts[0] || '').toLowerCase();
         const args    = parts.slice(1);
         const text    = args.join(' ');
@@ -209,7 +216,7 @@ async function processMessage(Cypher, msg, db, plugins, saveDatabase, loadBlackl
 
         if (!command) return;
 
-        // 13. Font transform (if enabled)
+        // 14. Font transform helper
         const fontStyleReply = (txt) => {
             try {
                 const fonts = require('./fonts');
@@ -219,23 +226,19 @@ async function processMessage(Cypher, msg, db, plugins, saveDatabase, loadBlackl
             } catch (_) { return String(txt); }
         };
 
-        // 14. Build reply helper
+        // 15. Reply helper
         const reply = async (txt) => {
             const out = fontStyleReply(txt);
             return Cypher.sendMessage(chat, { text: out }, { quoted: m });
         };
 
-        // 15. Bad words list
-        const bad = loadBadWords();
-
-        // 16. isUrl helper
+        // 16. Misc helpers
+        const bad   = loadBadWords();
         const isUrl = (url) => /https?:\/\/[^\s]+/.test(url);
-
-        // 17. Quoted + mime
         const quoted = m.quoted || null;
         const mime   = quoted?.mimetype || m.msg?.mimetype || '';
 
-        // 18. Full context
+        // 17. Full context object
         const context = {
             Cypher, m, db, reply, loadBlacklist, saveDatabase, saveBlacklist,
             prefix, command, args, text, q,
@@ -263,16 +266,14 @@ async function processMessage(Cypher, msg, db, plugins, saveDatabase, loadBlackl
             groupMetadata,
             participants:  groupMetadata?.participants || [],
             isGroupAdmins: isAdmins,
-            isGroupOwner:  groupMetadata?.owner
-                             ? sender === groupMetadata.owner
-                             : false,
+            isGroupOwner:  groupMetadata?.owner ? sender === groupMetadata.owner : false,
             plugins,
         };
 
-        // 19. Sticker alias check
+        // 18. Sticker alias
         if (m.msg?.mtype === 'stickerMessage' && db.settings.stickerAliases) {
-            const hash       = [...(m.msg.fileSha256 || [])].toString();
-            const aliasCmd   = db.settings.stickerAliases[hash];
+            const hash     = [...(m.msg.fileSha256 || [])].toString();
+            const aliasCmd = db.settings.stickerAliases[hash];
             if (aliasCmd) {
                 const aliasPlugin = plugins.find(p => {
                     const cmds = Array.isArray(p.command) ? p.command : [p.command];
@@ -291,22 +292,23 @@ async function processMessage(Cypher, msg, db, plugins, saveDatabase, loadBlackl
             }
         }
 
-        // 20. Find plugin
+        // 19. Find plugin
         const plugin = plugins.find(p => {
             const cmds = Array.isArray(p.command) ? p.command : [p.command];
             return cmds.includes(command);
         });
 
-        if (!plugin) return;
-
-        // 21. Autoreact on command
-        if (plugin.react && db.settings.autoreact === 'command') {
-            await Cypher.sendMessage(chat, {
-                react: { text: plugin.react, key: m.key },
-            }).catch(() => {});
+        if (!plugin) {
+            if (isGroup) console.log(color(`[BOTIFY-X] GROUP no plugin found for command: "${command}"`, 'yellow'));
+            return;
         }
 
-        // 22. Autotype on command
+        // 20. Autoreact on command
+        if (plugin.react && db.settings.autoreact === 'command') {
+            await Cypher.sendMessage(chat, { react: { text: plugin.react, key: m.key } }).catch(() => {});
+        }
+
+        // 21. Autotype/autorecord on command
         if (db.settings.autotype === 'command') {
             await Cypher.sendPresenceUpdate('composing', chat).catch(() => {});
         }
@@ -317,9 +319,7 @@ async function processMessage(Cypher, msg, db, plugins, saveDatabase, loadBlackl
             await Cypher.readMessages([m.key]).catch(() => {});
         }
 
-        // 23. Execute — plugin errors are surfaced in WhatsApp instead of being
-        // swallowed silently, so the user knows something went wrong and can
-        // report the exact message rather than seeing no response at all.
+        // 22. Execute plugin — errors sent to WhatsApp instead of silently swallowed
         try {
             await plugin.operate(context);
         } catch (pluginErr) {
