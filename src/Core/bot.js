@@ -76,9 +76,27 @@ function extractOwnerFromCreds() {
         const number = jid.split('@')[0].split(':')[0].replace(/[^0-9]/g, '');
         if (!number) return;
 
-        global.ownerNumber = number;
-        writeEnvKey('OWNER_NUMBER', number);
-        console.log(color(`[BOTIFY-X] Owner number detected: ${number}`, 'cyan'));
+        // Always record the session's own number separately so other
+        // code can distinguish "bot account" from "owner's personal number".
+        global.botOwnNumber = number;
+
+        // OWNER_NUMBER is who commands the bot.  When the bot runs on a
+        // SEPARATE WhatsApp account from the owner's personal phone the user
+        // must set OWNER_NUMBER in .env to their personal number.
+        // We must NOT overwrite that value on every restart, or the bot will
+        // lock the owner out of group commands every time it restarts.
+        const existingOwner = (process.env.OWNER_NUMBER || '').replace(/[^0-9]/g, '');
+        if (existingOwner && existingOwner !== number) {
+            // User has configured a personal owner number — respect it.
+            global.ownerNumber = existingOwner;
+            console.log(color(`[BOTIFY-X] Bot number   : ${number}`, 'cyan'));
+            console.log(color(`[BOTIFY-X] Owner number : ${existingOwner} (custom — from .env)`, 'green'));
+        } else {
+            // Self-bot mode or first run — bot number IS the owner number.
+            global.ownerNumber = number;
+            writeEnvKey('OWNER_NUMBER', number);
+            console.log(color(`[BOTIFY-X] Owner number detected: ${number}`, 'cyan'));
+        }
     } catch (e) {
         console.warn(color(`[BOTIFY-X] Could not extract owner number from creds: ${e.message}`, 'yellow'));
     }
