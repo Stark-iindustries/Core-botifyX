@@ -281,6 +281,74 @@ async function processMessage(Cypher, msg, db, plugins, saveDatabase, loadBlackl
             }
         }
 
+        // ── 7b. Auto-moderation ───────────────────────────────────────────────
+        // Must run BEFORE the mode gate so antilink/antitag/antibadword fire
+        // even in private mode when a regular member (non-owner) sends a message.
+        if (isGroup && !isCreator && !isAdmins) {
+            const chatCfg = db.chats?.[chat] || {};
+            const msgBody = m.body || '';
+
+            // ── Antilink ──────────────────────────────────────────────────────
+            const hasLink = /https?://[^s]+|www.[a-zA-Z0-9][^s]*/i.test(msgBody);
+            if (hasLink && (chatCfg.antilink || chatCfg.antilinkwarn || chatCfg.antilinkkick)) {
+                try { await Cypher.sendMessage(chat, { delete: m.key }); } catch (_) {}
+                if (chatCfg.antilinkkick) {
+                    await Cypher.groupParticipantsUpdate(chat, [sender], 'remove').catch(() => {});
+                    await Cypher.sendMessage(chat, {
+                        text: `🚫 *@${sender.split('@')[0]} was kicked for sending a link.*`,
+                        mentions: [sender],
+                    }).catch(() => {});
+                } else if (chatCfg.antilinkwarn) {
+                    await buildWarnHandler(Cypher, m, db, saveDatabase)(sender);
+                } else {
+                    await Cypher.sendMessage(chat, {
+                        text: `⚠️ *@${sender.split('@')[0]}, links are not allowed in this group.*`,
+                        mentions: [sender],
+                    }).catch(() => {});
+                }
+                return;
+            }
+
+            // ── Antibadword ───────────────────────────────────────────────────
+            const badWords = loadBadWords();
+            if (badWords.length) {
+                const lowerBody = msgBody.toLowerCase();
+                const hasBad = badWords.some(w => lowerBody.includes(w.toLowerCase()));
+                if (hasBad) {
+                    if (chatCfg.antibadword) {
+                        try { await Cypher.sendMessage(chat, { delete: m.key }); } catch (_) {}
+                        await Cypher.sendMessage(chat, {
+                            text: `⚠️ *@${sender.split('@')[0]}, offensive language is not allowed.*`,
+                            mentions: [sender],
+                        }).catch(() => {});
+                    } else if (chatCfg.antibadwordkick) {
+                        try { await Cypher.sendMessage(chat, { delete: m.key }); } catch (_) {}
+                        await Cypher.groupParticipantsUpdate(chat, [sender], 'remove').catch(() => {});
+                        await Cypher.sendMessage(chat, {
+                            text: `🚫 *@${sender.split('@')[0]} was kicked for using offensive language.*`,
+                            mentions: [sender],
+                        }).catch(() => {});
+                    }
+                    if (chatCfg.antibadword || chatCfg.antibadwordkick) return;
+                }
+            }
+
+            // ── Antitag ───────────────────────────────────────────────────────
+            const mentionCount = (m.mentionedJid || []).length;
+            if (mentionCount > 5 && (chatCfg.antitag || chatCfg.antitagwarn)) {
+                try { await Cypher.sendMessage(chat, { delete: m.key }); } catch (_) {}
+                if (chatCfg.antitagwarn) {
+                    await buildWarnHandler(Cypher, m, db, saveDatabase)(sender);
+                } else {
+                    await Cypher.sendMessage(chat, {
+                        text: `⚠️ *@${sender.split('@')[0]}, mass tagging is not allowed.*`,
+                        mentions: [sender],
+                    }).catch(() => {});
+                }
+                return;
+            }
+        }
+
         // ── 8. Mode gate ──────────────────────────────────────────────────────
         const allowed =
             isCreator ||
