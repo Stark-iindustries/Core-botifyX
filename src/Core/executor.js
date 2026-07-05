@@ -135,6 +135,26 @@ async function processMessage(Cypher, msg, db, plugins, saveDatabase, loadBlackl
             const senderN      = numOnly(sender);
             const participants = groupMetadata.participants || [];
 
+            // Pass 0 — Own-account LID: Baileys reports fromMe=false for the owner's
+            // own phone messages in groups with Member Privacy. The sender arrives as
+            // an @lid identifier that never matches the stored phone number, so Passes
+            // 1-3 all fail. Fix: compare the sender's LID against the bot's own
+            // account LID stored in its Baileys credentials — if they match, the
+            // sender IS the owner/bot account.
+            if (!isCreator) {
+                try {
+                    const myLid = Cypher.authState?.creds?.me?.lid;
+                    if (myLid && numOnly(myLid) === senderN) {
+                        isCreator = true;
+                        if (!global.ownerLID) {
+                            global.ownerLID = senderN;
+                            writeEnvKey('OWNER_LID', senderN);
+                        }
+                        console.log(color('[BOTIFY-X] ✅ isCreator via own-account LID (Pass 0)', 'green'));
+                    }
+                } catch (_) {}
+            }
+
             // Pass 1 — ownerLID cache
             if (global.ownerLID && senderN === global.ownerLID) {
                 isCreator = true;
