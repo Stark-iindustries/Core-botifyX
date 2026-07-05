@@ -216,6 +216,26 @@ async function processMessage(Cypher, msg, db, plugins, saveDatabase, loadBlackl
                 isCreator ? 'green' : 'cyan'));
         }
 
+        // ── 6b. Re-resolve isAdmins for LID-identified creator ───────────────
+        // isAdmins was set in Step 4 via admins.includes(sender) using phone JIDs.
+        // In Member Privacy groups p.id is a LID, so the phone-JID check above
+        // silently returned false even when the owner IS an admin. Now that the
+        // LID scan has confirmed isCreator, look up the owner's participant entry
+        // by both ownerLID and ownernumber to handle either storage format.
+        if (isCreator && isGroup && !isAdmins && groupMetadata) {
+            const ownerParticipant = (groupMetadata.participants || []).find(p =>
+                numOnly(p.id) === global.ownerLID ||
+                numOnly(p.id) === global.ownernumber
+            );
+            const wasAdmin = isAdmins;
+            if (ownerParticipant?.admin === 'admin' || ownerParticipant?.admin === 'superadmin') {
+                isAdmins = true;
+            }
+            console.log(color(
+                `[BOTIFY-X] ◆ ADMIN-CHECK  ownerLID=${global.ownerLID || '?'} ownerNum=${global.ownernumber || '?'} participantFound=${!!ownerParticipant} participantId=${ownerParticipant?.id || 'none'} participantAdmin=${ownerParticipant?.admin || 'none'} isAdmins=${isAdmins}`,
+                isAdmins ? 'green' : 'yellow'));
+        }
+
         // ── 7. Auto-owner claim ───────────────────────────────────────────────
         // If no custom owner has been set, the first person to send a private
         // DM to the bot (within the 5-min window opened at connect) is
