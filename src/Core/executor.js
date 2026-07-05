@@ -143,9 +143,12 @@ async function processMessage(Cypher, msg, db, plugins, saveDatabase, loadBlackl
             // sender IS the owner/bot account.
             if (!isCreator) {
                 try {
-                    // Cypher.authState is not on the socket — use Cypher.user.lid instead
-                    const myLid = Cypher.user?.lid;
-                    if (myLid && numOnly(myLid) === senderN) {
+                    // Cypher.authState is not on the socket — use Cypher.user.lid instead.
+                    // Also strip device suffix before comparing:
+                    //   "178100214202616:4@lid.whatsapp.net" → user part "178100214202616"
+                    const myLid     = Cypher.user?.lid || '';
+                    const myLidUser = myLid.split('@')[0].split(':')[0];
+                    if (myLidUser && myLidUser === senderN) {
                         isCreator = true;
                         if (!global.ownerLID) {
                             global.ownerLID = senderN;
