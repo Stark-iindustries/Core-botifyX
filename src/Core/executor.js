@@ -51,23 +51,7 @@ async function processMessage(Cypher, msg, db, plugins, saveDatabase, loadBlackl
     try {
         // ── 1. Parse ──────────────────────────────────────────────────────────
         const m = heart(Cypher, msg);
-
-        // CHECKPOINT A — very first thing, before every filter
-        const rawGroup = (msg.key?.remoteJid || '').endsWith('@g.us');
-        if (rawGroup) {
-            console.log(color(
-                `[BOTIFY-X] ◆ CK-A  heart=${m ? 'OK' : 'NULL'} fromMe=${msg.key?.fromMe} id=${(msg.key?.id || '').slice(-8)}`,
-                'magenta'));
-        }
-
         if (!m || !m.message || !m.chat) return;
-
-        if (m.isGroup) {
-            console.log(color(
-                `[BOTIFY-X] ◆ CK-B  isBaileys=${m.isBaileys} sender=${numOnly(m.sender)} creator=${numOnly(global.creator)} body="${(m.body || '').slice(0, 30)}"`,
-                'cyan'));
-        }
-
         if (m.isBaileys) return;
 
         if (m.id) msgCache.set(m.id, msg);
@@ -114,19 +98,14 @@ async function processMessage(Cypher, msg, db, plugins, saveDatabase, loadBlackl
         // ── 5. Owner / sudo / isCreator ───────────────────────────────────────
         // Comparison strips the @domain suffix so @lid and @s.whatsapp.net
         // are treated as equal when the numeric part matches.
-        // Example: "178100214202616@lid" === "178100214202616@s.whatsapp.net"
-        //          after numOnly() both become "178100214202616".
         const ownerJid  = global.creator || '';
         const isSudo    = Array.isArray(db.sudo) && db.sudo.includes(sender);
         let   isCreator =
             (numOnly(sender) && numOnly(ownerJid) && numOnly(sender) === numOnly(ownerJid)) ||
             isSudo ||
-            (m.fromMe && !m.isBaileys);   // own-session message that isn't a bot echo
+            (m.fromMe && !m.isBaileys);
 
         // @lid group-metadata cross-reference:
-        // If still not matched, look the sender up in groupMetadata.participants.
-        // Each participant has an `id` (phone JID) and possibly a `lid` field.
-        // We try all available JIDs for the participant and compare by number.
         if (!isCreator && isGroup && groupMetadata && global.ownernumber) {
             const senderN = numOnly(sender);
             const participant = (groupMetadata.participants || []).find(p => {
@@ -134,21 +113,47 @@ async function processMessage(Cypher, msg, db, plugins, saveDatabase, loadBlackl
                 return numOnly(p.id) === senderN || numOnly(p.lid) === senderN;
             });
             if (participant) {
-                // Resolve to the phone-format JID and compare numerically
                 const allJids = [participant.id, participant.lid].filter(Boolean);
                 const matched = allJids.some(j => numOnly(j) === global.ownernumber);
                 if (matched) isCreator = true;
             }
         }
 
-        if (isGroup) {
-            console.log(color(
-                `[BOTIFY-X] ◆ CK-C  isCreator=${isCreator} mode=${mode} allowed=${
-                    isCreator || mode==='public' || (mode==='group'&&isGroup) || (mode==='pm'&&!isGroup)}`,
-                'cyan'));
+        // ── 6. Auto-owner claim ───────────────────────────────────────────────
+        // If no custom owner has been set, the first person to send a private
+        // DM to the bot (within the 5-min window opened at connect) is
+        // automatically registered as the owner — zero config needed.
+        if (global.pendingOwnerClaim && !isGroup) {
+            const { writeEnvKey } = require('./bot');
+            const claimedNum = numOnly(sender);
+            if (claimedNum) {
+                // Close the window
+                global.pendingOwnerClaim = false;
+                if (global.ownerClaimTimer) {
+                    clearTimeout(global.ownerClaimTimer);
+                    global.ownerClaimTimer = null;
+                }
+                // Update all globals so every subsequent message works
+                global.ownerNumber  = claimedNum;
+                global.ownernumber  = claimedNum;
+                global.creator      = `${claimedNum}@s.whatsapp.net`;
+                // Persist to .env so future restarts remember this number
+                writeEnvKey('OWNER_NUMBER', claimedNum);
+                process.env.OWNER_NUMBER = claimedNum;
+                console.log(color(`[BOTIFY-X] ✅ Owner auto-registered: ${claimedNum}`, 'green'));
+                // Treat this very message as coming from the owner
+                isCreator = true;
+                // Notify the new owner
+                await Cypher.sendMessage(chat, {
+                    text: `✅ *You've been registered as the BotifyX owner!*\n\n` +
+                          `📱 Your number: *${claimedNum}*\n\n` +
+                          `You can now control the bot from groups too.\n` +
+                          `_This was a one-time setup — your number is saved permanently._`,
+                }, { quoted: m });
+            }
         }
 
-        // ── 6. Mode gate ──────────────────────────────────────────────────────
+        // ── 7. Mode gate ──────────────────────────────────────────────────────
         const allowed =
             isCreator ||
             mode === 'public' ||
@@ -156,14 +161,14 @@ async function processMessage(Cypher, msg, db, plugins, saveDatabase, loadBlackl
             (mode === 'pm'    && !isGroup);
         if (!allowed) return;
 
-        // ── 7. Autoread ───────────────────────────────────────────────────────
+        // ── 8. Autoread ───────────────────────────────────────────────────────
         if (db.settings.autoread === 'all' ||
             (db.settings.autoread === 'group' && isGroup) ||
             (db.settings.autoread === 'pm'    && !isGroup)) {
             await Cypher.readMessages([m.key]).catch(() => {});
         }
 
-        // ── 8. Presence ───────────────────────────────────────────────────────
+        // ── 9. Presence ───────────────────────────────────────────────────────
         if (db.settings.autotype === 'all' ||
             (db.settings.autotype === 'group' && isGroup) ||
             (db.settings.autotype === 'pm'    && !isGroup)) {
@@ -174,11 +179,11 @@ async function processMessage(Cypher, msg, db, plugins, saveDatabase, loadBlackl
             await Cypher.sendPresenceUpdate('recording', chat).catch(() => {});
         }
 
-        // ── 9. Antibot ────────────────────────────────────────────────────────
+        // ── 10. Antibot ───────────────────────────────────────────────────────
         await antiBot(Cypher, m, db).catch(() => {});
         await handleBotKickReply(Cypher, m, db).catch(() => {});
 
-        // ── 10. Autoreact ─────────────────────────────────────────────────────
+        // ── 11. Autoreact ─────────────────────────────────────────────────────
         const emojis    = (db.settings.statusemoji || '🧡').split(',').map(e => e.trim());
         const randEmoji = () => emojis[Math.floor(Math.random() * emojis.length)];
         if (db.settings.autoreact === 'all' ||
@@ -187,20 +192,14 @@ async function processMessage(Cypher, msg, db, plugins, saveDatabase, loadBlackl
             await Cypher.sendMessage(chat, { react: { text: randEmoji(), key: m.key } }).catch(() => {});
         }
 
-        // ── 11. Command detection ─────────────────────────────────────────────
+        // ── 12. Command detection ─────────────────────────────────────────────
         const body  = m.body || '';
         const pfxRe = prefix
             ? new RegExp(`^[${prefix.replace(/[-[\]{}()*+?.,\\^$|#\s]/g, '\\$&')}]`)
             : null;
         const isCmd = pfxRe ? pfxRe.test(body) : body.length > 0;
 
-        if (isGroup) {
-            console.log(color(
-                `[BOTIFY-X] ◆ CK-D  prefix="${prefix}" body="${body.slice(0,30)}" isCmd=${isCmd}`,
-                'cyan'));
-        }
-
-        // ── 12. Chatbot ───────────────────────────────────────────────────────
+        // ── 13. Chatbot ───────────────────────────────────────────────────────
         if (!isCmd && db.settings.chatbot && !m.isBaileys) {
             try {
                 const GeminiAI = require('../Functions/gemini');
@@ -212,7 +211,7 @@ async function processMessage(Cypher, msg, db, plugins, saveDatabase, loadBlackl
         }
         if (!isCmd) return;
 
-        // ── 13. Extract command ───────────────────────────────────────────────
+        // ── 14. Extract command ───────────────────────────────────────────────
         const rawCmd  = prefix ? body.slice(prefix.length).trim() : body.trim();
         const parts   = rawCmd.split(/\s+/);
         const command = (parts[0] || '').toLowerCase();
@@ -221,7 +220,7 @@ async function processMessage(Cypher, msg, db, plugins, saveDatabase, loadBlackl
         const q       = text;
         if (!command) return;
 
-        // ── 14. Helpers ───────────────────────────────────────────────────────
+        // ── 15. Helpers ───────────────────────────────────────────────────────
         const fontStyleReply = (txt) => {
             try {
                 const fonts = require('./fonts');
@@ -236,7 +235,7 @@ async function processMessage(Cypher, msg, db, plugins, saveDatabase, loadBlackl
         const quoted = m.quoted || null;
         const mime   = quoted?.mimetype || m.msg?.mimetype || '';
 
-        // ── 15. Context ───────────────────────────────────────────────────────
+        // ── 16. Context ───────────────────────────────────────────────────────
         const context = {
             Cypher, m, db, reply, loadBlacklist, saveDatabase, saveBlacklist,
             prefix, command, args, text, q,
@@ -268,7 +267,7 @@ async function processMessage(Cypher, msg, db, plugins, saveDatabase, loadBlackl
             plugins,
         };
 
-        // ── 16. Sticker alias ─────────────────────────────────────────────────
+        // ── 17. Sticker alias ─────────────────────────────────────────────────
         if (m.msg?.mtype === 'stickerMessage' && db.settings.stickerAliases) {
             const hash     = [...(m.msg.fileSha256 || [])].toString();
             const aliasCmd = db.settings.stickerAliases[hash];
@@ -289,7 +288,7 @@ async function processMessage(Cypher, msg, db, plugins, saveDatabase, loadBlackl
             }
         }
 
-        // ── 17. Find plugin ───────────────────────────────────────────────────
+        // ── 18. Find plugin ───────────────────────────────────────────────────
         const plugin = plugins.find(p => {
             const cmds = Array.isArray(p.command) ? p.command : [p.command];
             return cmds.includes(command);
@@ -300,7 +299,7 @@ async function processMessage(Cypher, msg, db, plugins, saveDatabase, loadBlackl
             return;
         }
 
-        // ── 18. Pre-command auto features ─────────────────────────────────────
+        // ── 19. Pre-command auto features ─────────────────────────────────────
         if (plugin.react && db.settings.autoreact === 'command') {
             await Cypher.sendMessage(chat, { react: { text: plugin.react, key: m.key } }).catch(() => {});
         }
@@ -308,7 +307,7 @@ async function processMessage(Cypher, msg, db, plugins, saveDatabase, loadBlackl
         if (db.settings.autorecord === 'command') await Cypher.sendPresenceUpdate('recording', chat).catch(() => {});
         if (db.settings.autoread   === 'command') await Cypher.readMessages([m.key]).catch(() => {});
 
-        // ── 19. Execute ───────────────────────────────────────────────────────
+        // ── 20. Execute ───────────────────────────────────────────────────────
         try {
             await plugin.operate(context);
         } catch (pluginErr) {
