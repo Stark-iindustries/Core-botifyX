@@ -143,7 +143,8 @@ async function processMessage(Cypher, msg, db, plugins, saveDatabase, loadBlackl
             // sender IS the owner/bot account.
             if (!isCreator) {
                 try {
-                    const myLid = Cypher.authState?.creds?.me?.lid;
+                    // Cypher.authState is not on the socket — use Cypher.user.lid instead
+                    const myLid = Cypher.user?.lid;
                     if (myLid && numOnly(myLid) === senderN) {
                         isCreator = true;
                         if (!global.ownerLID) {
