@@ -323,6 +323,11 @@ function cleanOldMessages(db) {
                     // LID JIDs carry a device suffix: "178100214202616:4@lid.whatsapp.net"
                     // Only the user part (before ":") matches the sender LID in groups.
                     const numLid = rawLid.split(':')[0].replace(/[^0-9]/g, '');
+                    // Always store botLID — this is the connected account's LID
+                    // regardless of whether OWNER_NUMBER differs from the bot number.
+                    if (numLid) {
+                        global.botLID = numLid;
+                    }
                     if (numLid && numLid !== global.ownernumber) {
                         global.ownerLID = numLid;
                         console.log(cyan(`[BOTIFY-X] 🔑 Bot LID captured: ${numLid}`));
