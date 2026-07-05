@@ -34,11 +34,6 @@ function canPromptInteractively() {
 }
 
 // ── 2. Session ID prompt ──────────────────────────────────────────────────────
-// Uses fs.readSync(fd=0) — a raw BLOCKING read directly on stdin file descriptor.
-// This bypasses Node.js stream events entirely. On Pterodactyl/Katabump the
-// stream API fires 'end' immediately at startup (WebSocket not yet attached),
-// but the underlying FD 0 stays connected. readSync blocks until the user
-// actually pastes something, then returns. No stream events, no crashes.
 function promptForSessionId() {
     return new Promise((resolve, reject) => {
         process.stdout.write(red('\nPlease wait for a few seconds to enter your session id!\n'));
@@ -73,7 +68,7 @@ function promptForSessionId() {
             }
 
             if (!id.startsWith('BOTIFY-X=') && !id.startsWith('MEGA-')) {
-                process.stdout.write(red('[BOTIFY-X] \u274c Invalid format. Must start with BOTIFY-X= or MEGA-\n'));
+                process.stdout.write(red('[BOTIFY-X] ❌ Invalid format. Must start with BOTIFY-X= or MEGA-\n'));
                 process.stdout.write('Paste Session ID → ');
                 setImmediate(attempt);
                 return;
@@ -81,11 +76,10 @@ function promptForSessionId() {
 
             writeEnvKey('SESSION_ID', id);
             process.env.SESSION_ID = id;
-            process.stdout.write(green('[BOTIFY-X] \u2705 Session ID saved.\n\n'));
+            process.stdout.write(green('[BOTIFY-X] ✅ Session ID saved.\n\n'));
             resolve(id);
         };
 
-        // setImmediate lets any queued console output flush before we block
         setImmediate(attempt);
     });
 }
@@ -94,7 +88,7 @@ function promptForSessionId() {
 function migrateDatabase(db) {
     const defaults = {
         mode: 'private', botname: 'BotifyX', ownername: 'Not Set!',
-        watermark: '\u00a9BOTIFY X', packname: 'BOTIFY X', author: 'Mr Stark',
+        watermark: '©BOTIFY X', packname: 'BOTIFY X', author: 'Mr Stark',
         timezone: 'Africa/Lagos', alwaysonline: true, anticall: false,
         antidelete: 'private', antibug: false, autoreact: false,
         autoread: false, autotype: false, autorecord: false,
@@ -148,8 +142,8 @@ function cleanOldMessages(db) {
 
     const pgUrl = process.env.DATABASE_URL || process.env.POSTGRES_URL || '';
     console.log(pgUrl
-        ? cyan(`[BOTIFY-X] PostgreSQL URL: \u2705 ${pgUrl.split('@').pop()}`)
-        : cyan('[BOTIFY-X] PostgreSQL URL: \u274cNot provided'));
+        ? cyan(`[BOTIFY-X] PostgreSQL URL: ✅ ${pgUrl.split('@').pop()}`)
+        : cyan('[BOTIFY-X] PostgreSQL URL: ❌Not provided'));
 
     const PORT = process.env.PORT || 3000;
     console.log(cyan(`[BOTIFY-X] Running on port: ${PORT}`));
@@ -187,10 +181,9 @@ function cleanOldMessages(db) {
     console.log(cyan('[BOTIFY-X] Connected to SQLite Database.'));
     console.log(cyan('[BOTIFY-X] Connected to Store Database.'));
 
-    // ── Database migration + cleanup (moved before session prompt) ─────────────
-    console.log(cyan('[BOTIFY-X] \uD83D\uDD27 Migrating old database schema...'));
+    console.log(cyan('[BOTIFY-X] 🔧 Migrating old database schema...'));
     migrateDatabase(db);
-    console.log(green('[BOTIFY-X] \u2705 Database migration complete'));
+    console.log(green('[BOTIFY-X] ✅ Database migration complete'));
 
     cleanChatbotMessages(db);
     console.log(cyan('[BOTIFY-X] Cleaned up chatbot messages older than 1 days.'));
@@ -204,8 +197,6 @@ function cleanOldMessages(db) {
         try {
             const mod = require(path.join(PLUGIN_DIR, file));
             if (Array.isArray(mod)) {
-                // Tag each command with a category derived from its source file so
-                // `.menu` can group commands live, without any hardcoded list.
                 const category = file.replace(/\.js$/i, '').toUpperCase();
                 for (const cmdObj of mod) {
                     if (cmdObj && typeof cmdObj === 'object' && !cmdObj._category) {
@@ -227,31 +218,25 @@ function cleanOldMessages(db) {
     console.log(cyan(`[BOTIFY-X] Platform : ${detectPlatform()}`));
     console.log(cyan(`[BOTIFY-X] Node.js  : ${process.version}`));
 
-    // ── Session ID check — everything else (DB, plugins, commands) is fully ───
-    // loaded by this point. This is intentionally the LAST step before we hand
-    // off to the connection logic, so the console prompt only appears once the
-    // bot is otherwise ready to go.
     if (!process.env.SESSION_ID) {
         if (canPromptInteractively()) {
             try {
                 await promptForSessionId();
             } catch (e) {
-                console.error(red(`[BOTIFY-X] \u274c Could not read Session ID: ${e.message}`));
+                console.error(red(`[BOTIFY-X] ❌ Could not read Session ID: ${e.message}`));
                 process.exit(1);
             }
         } else {
-            console.error(red('[BOTIFY-X] \u274c SESSION_ID is not set.'));
-            console.error(cyan('[BOTIFY-X] On Railway  \u2192 Variables tab \u2192 add  SESSION_ID = BOTIFY-X=...'));
-            console.error(cyan('[BOTIFY-X] On Heroku   \u2192 Settings \u2192 Config Vars \u2192 add SESSION_ID'));
-            console.error(cyan('[BOTIFY-X] On Render   \u2192 Environment \u2192 add SESSION_ID'));
+            console.error(red('[BOTIFY-X] ❌ SESSION_ID is not set.'));
+            console.error(cyan('[BOTIFY-X] On Railway  → Variables tab → add  SESSION_ID = BOTIFY-X=...'));
+            console.error(cyan('[BOTIFY-X] On Heroku   → Settings → Config Vars → add SESSION_ID'));
+            console.error(cyan('[BOTIFY-X] On Render   → Environment → add SESSION_ID'));
             console.error(cyan('[BOTIFY-X] Then redeploy / restart.'));
             process.exit(1);
         }
     }
 
     // ── Listen for update results from the BotifyX bootstrap (parent process) ───
-    // Lets the `.update` command give real feedback in WhatsApp instead of only
-    // the console, since the bootstrap is the one that actually checks/applies.
     if (typeof process.send === 'function') {
         process.on('message', async (msg) => {
             if (!msg || msg.type !== 'updateResult') return;
@@ -295,12 +280,6 @@ function cleanOldMessages(db) {
         global.Cypher = Cypher;
 
         // ── Track our own outgoing message IDs ──────────────────────────────────
-        // Relying on WhatsApp message-ID length/prefix patterns to detect "this is
-        // an echo of a message WE just sent" is unreliable — the mobile app now
-        // generates IDs in the same format the library uses, which was silently
-        // swallowing real messages typed by the owner (e.g. in groups). Instead,
-        // record every ID we actually send through `sendMessage` and check
-        // membership in heart.js. This is exact, not a guess.
         global.sentMsgIds = global.sentMsgIds || new Set();
         const _origSendMessage = Cypher.sendMessage.bind(Cypher);
         Cypher.sendMessage = async (...args) => {
@@ -330,26 +309,52 @@ function cleanOldMessages(db) {
                 global.ownernumber = ownerRaw.replace(/[^0-9]/g, '');
                 global.creator     = `${global.ownernumber}@s.whatsapp.net`;
                 global.botname     = db.settings.botname   || 'BotifyX';
-                global.wm          = db.settings.watermark || '\u00a9BOTIFY X';
+                global.wm          = db.settings.watermark || '©BOTIFY X';
                 global.timezones   = db.settings.timezone  || 'Africa/Lagos';
                 global.ownername   = db.settings.ownername || 'Mr Stark';
 
-                console.log(green(`[BOTIFY-X] \u2705 Connected as ${Cypher.user?.name || botNum}`));
+                console.log(green(`[BOTIFY-X] ✅ Connected as ${Cypher.user?.name || botNum}`));
                 console.log(cyan(`[BOTIFY-X] Owner     : ${global.creator}`));
                 console.log(cyan(`[BOTIFY-X] Mode      : ${db.settings.mode || 'private'}`));
 
                 cleanTmp();
-
-                // ── Send a status message to "Message Yourself" on successful connect ─
-                // See src/Core/connection.js for the message content/logic.
                 sendConnectionMessage(Cypher, db, detectPlatform);
+
+                // ── Auto-owner registration ───────────────────────────────────
+                // If OWNER_NUMBER has never been customised (bot number === owner
+                // number), open a 5-minute window: the first person to DM the
+                // bot gets auto-registered as owner — zero extra config needed.
+                const botNumOnly = botNum.split('@')[0];
+                if (global.ownernumber === botNumOnly) {
+                    // Clear any previous timer before setting a new one
+                    if (global.ownerClaimTimer) {
+                        clearTimeout(global.ownerClaimTimer);
+                        global.ownerClaimTimer = null;
+                    }
+                    global.pendingOwnerClaim = true;
+                    console.log(yellow('[BOTIFY-X] ⚠️  No custom owner set — auto-claim window OPEN (5 min).'));
+                    console.log(yellow('[BOTIFY-X]    Send ANY message to the bot from your personal WhatsApp to register as owner.'));
+                    global.ownerClaimTimer = setTimeout(() => {
+                        if (global.pendingOwnerClaim) {
+                            global.pendingOwnerClaim = false;
+                            console.log(cyan('[BOTIFY-X] Auto-claim window closed — no owner claimed. Running in self-bot mode.'));
+                        }
+                    }, 5 * 60 * 1000);
+                } else {
+                    // Custom owner already set — no claim window needed
+                    global.pendingOwnerClaim = false;
+                    if (global.ownerClaimTimer) {
+                        clearTimeout(global.ownerClaimTimer);
+                        global.ownerClaimTimer = null;
+                    }
+                }
             }
 
             if (connection === 'close') {
                 const reason    = new Boom(lastDisconnect?.error)?.output?.statusCode;
                 const loggedOut = reason === DisconnectReason.loggedOut;
 
-                console.log(red(`[BOTIFY-X] Disconnected \u2014 code ${reason}`));
+                console.log(red(`[BOTIFY-X] Disconnected — code ${reason}`));
 
                 if (loggedOut) {
                     try { fs.rmSync(SESSION_DIR, { recursive: true, force: true }); } catch (_) {}
@@ -361,10 +366,10 @@ function cleanOldMessages(db) {
                 if (retryCount < MAX_RETRIES) {
                     retryCount++;
                     const delay = Math.min(3000 * retryCount, 30000);
-                    console.log(yellow(`[BOTIFY-X] Reconnecting in ${delay / 1000}s (attempt ${retryCount})\u2026`));
+                    console.log(yellow(`[BOTIFY-X] Reconnecting in ${delay / 1000}s (attempt ${retryCount})…`));
                     setTimeout(startBot, delay);
                 } else {
-                    console.log(red('[BOTIFY-X] Max reconnect attempts reached. Restarting process\u2026'));
+                    console.log(red('[BOTIFY-X] Max reconnect attempts reached. Restarting process…'));
                     process.exit(1);
                 }
             }
@@ -373,12 +378,6 @@ function cleanOldMessages(db) {
         Cypher.ev.on('creds.update', saveCreds);
 
         Cypher.ev.on('messages.upsert', async ({ messages, type }) => {
-                        // RAW diagnostic — fires for every group message before the type filter
-            for (const raw of messages) {
-                if ((raw.key && raw.key.remoteJid || '').endsWith('@g.us')) {
-                    console.log(cyan('[BOTIFY-X] RAW-GROUP type=' + type + ' fromMe=' + (raw.key && raw.key.fromMe) + ' id=' + ((raw.key && raw.key.id) || '').slice(-8)));
-                }
-            }
             if (type !== 'notify') return;
             for (const msg of messages) {
                 try {
@@ -416,7 +415,7 @@ function cleanOldMessages(db) {
                     const rawMsg   = db.settings.anticallmsg || '';
                     const replyMsg = rawMsg
                         ? rawMsg.replace(/{user}/g, `@${call.from.split('@')[0]}`).replace(/{calltype}/g, callType)
-                        : `\uD83D\uDEA8 *CALL DETECTED!*\n\n@${call.from.split('@')[0]}, my owner cannot receive ${callType} calls.\n\u26a0\ufe0f Your call was *declined*. Please message instead.`;
+                        : `🚨 *CALL DETECTED!*\n\n@${call.from.split('@')[0]}, my owner cannot receive ${callType} calls.\n⚠️ Your call was *declined*. Please message instead.`;
                     await Cypher.sendMessage(call.from, { text: replyMsg, mentions: [call.from] });
                 } catch (_) {}
             }
@@ -450,4 +449,3 @@ function cleanOldMessages(db) {
 
     await downloadSessionData(startBot);
 })();
-
