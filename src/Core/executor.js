@@ -88,9 +88,21 @@ async function processMessage(Cypher, msg, db, plugins, saveDatabase, loadBlackl
                 console.warn(color(`[BOTIFY-X] groupMetadata failed (${chat}): ${e.message}`, 'yellow'));
             }
             if (groupMetadata) {
-                const admins = getAdmins(groupMetadata.participants || []);
+                const admins    = getAdmins(groupMetadata.participants || []);
+                const botNumStr = numOnly(global.botNumber || '');
                 isAdmins    = admins.includes(sender);
-                isBotAdmins = admins.includes(global.botNumber || '');
+                // In Member Privacy groups, participant IDs are LIDs not phone JIDs.
+                // Check both the full JID, the numeric phone, and global.botLID so the
+                // bot is recognised as admin even when its entry is stored as a LID.
+                isBotAdmins = admins.includes(global.botNumber || '') ||
+                    admins.some(a => {
+                        const n = numOnly(a);
+                        return (botNumStr && n === botNumStr) ||
+                               (global.botLID && n === global.botLID);
+                    });
+                console.log(color(
+                    `[BOTIFY-X] ◆ BOTADMIN-CHECK  botNum=${botNumStr} botLID=${global.botLID || '?'} isBotAdmins=${isBotAdmins}`,
+                    isBotAdmins ? 'green' : 'yellow'));
             }
             initChatEntry(chat);
             GroupDB.addMessage(chat, sender);
