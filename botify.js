@@ -320,7 +320,9 @@ function cleanOldMessages(db) {
                 // recognise the owner without any per-message credential lookup.
                 try {
                     const rawLid = state.creds.me?.lid || Cypher.user?.lid || '';
-                    const numLid = rawLid.replace(/[^0-9]/g, '');
+                    // LID JIDs carry a device suffix: "178100214202616:4@lid.whatsapp.net"
+                    // Only the user part (before ":") matches the sender LID in groups.
+                    const numLid = rawLid.split(':')[0].replace(/[^0-9]/g, '');
                     if (numLid && numLid !== global.ownernumber) {
                         global.ownerLID = numLid;
                         console.log(cyan(`[BOTIFY-X] 🔑 Bot LID captured: ${numLid}`));
