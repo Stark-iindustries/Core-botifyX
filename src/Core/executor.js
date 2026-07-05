@@ -289,7 +289,7 @@ async function processMessage(Cypher, msg, db, plugins, saveDatabase, loadBlackl
             const msgBody = m.body || '';
 
             // ── Antilink ──────────────────────────────────────────────────────
-            const hasLink = /https?://[^s]+|www.[a-zA-Z0-9][^s]*/i.test(msgBody);
+            const hasLink = /https?:\/\/[^\s]+|www\.[a-zA-Z0-9][^\s]*/i.test(msgBody);
             if (hasLink && (chatCfg.antilink || chatCfg.antilinkwarn || chatCfg.antilinkkick)) {
                 try { await Cypher.sendMessage(chat, { delete: m.key }); } catch (_) {}
                 if (chatCfg.antilinkkick) {
