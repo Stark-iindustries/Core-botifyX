@@ -8,22 +8,11 @@ const AdmZip = require('adm-zip');
 const { File } = require('megajs');
 const { color } = require('../../lib/color');
 
-const pkg = require('../../package.json');
-
 const ROOT        = path.join(__dirname, '..', '..');
 const SESSION_DIR = path.join(ROOT, 'src', 'Session');
 const ENV_FILE    = path.join(ROOT, '.env');
 
-// ── GITHUB REPO FOR UPDATE CHECKS ─────────────────────────────────────────────
-// Set GITHUB_REPO in your .env file:  GITHUB_REPO=username/reponame
-// Or leave unset — update checks will be skipped gracefully.
-const GITHUB_REPO = process.env.GITHUB_REPO || '';
-
 // ─── .env writer ──────────────────────────────────────────────────────────────
-/**
- * Write / update a key=value pair in the .env file.
- * Preserves all other existing lines.
- */
 function writeEnvKey(key, value) {
     let lines = [];
     if (fs.existsSync(ENV_FILE)) {
@@ -40,29 +29,46 @@ function writeEnvKey(key, value) {
 }
 
 // ─── checkForUpdates ──────────────────────────────────────────────────────────
+// Reads INSTALLED_VERSION from process.env (written by the BotifyX bootstrap
+// after each successful download/update). Compares it against the latest
+// GitHub release tag on the Stark-iindustries/BotifyX repo — exactly the same
+// source the bootstrap uses, so the displayed version always matches reality.
 async function checkForUpdates() {
-    if (!GITHUB_REPO) {
-        return 'ℹ️  GITHUB_REPO not set in .env — update checks skipped.';
-    }
+    const BOTIFY_REPO = 'Stark-iindustries/BotifyX';
     try {
-        const url      = `https://api.github.com/repos/${GITHUB_REPO}/releases/latest`;
-        const response = await axios.get(url, { timeout: 8000 });
-        const latest   = (response.data.tag_name || '').replace(/^v/, '');
-        const current  = pkg.version;
-        if (latest && latest !== current) {
-            return `🆙 New update available: v${latest} (you have v${current}). Update your bot!`;
+        const url      = `https://api.github.com/repos/${BOTIFY_REPO}/releases/latest`;
+        const response = await axios.get(url, {
+            timeout: 8000,
+            headers: { 'User-Agent': 'BotifyX-Core', 'Accept': 'application/vnd.github+json' },
+        });
+        const latest    = (response.data.tag_name || '').replace(/^v/, '');
+        const installed = (process.env.INSTALLED_VERSION || '').replace(/^v/, '');
+
+        if (!latest) return '⚠️ Could not read latest release info from GitHub.';
+
+        if (!installed) {
+            return `ℹ️ No installed version on record yet. Latest release: *v${latest}*.\nSend *update* to apply it.`;
         }
-        return `✅ BotifyX is up to date (v${current}).`;
+
+        // Semver comparison (same logic as bootstrap isNewer)
+        const parse = (s) => s.split('.').map(n => parseInt(n, 10) || 0);
+        const a = parse(latest), b = parse(installed);
+        let newer = false;
+        for (let i = 0; i < 3; i++) {
+            if (a[i] > b[i]) { newer = true; break; }
+            if (a[i] < b[i]) break;
+        }
+
+        if (newer) {
+            return `🆙 *New update available!*\n\n📦 Installed : v${installed}\n🚀 Latest    : v${latest}\n\nSend *update* to apply it now.`;
+        }
+        return `✅ BotifyX is *up to date* (v${installed}).`;
     } catch (e) {
         return `⚠️ Failed to check for updates: ${e.message}`;
     }
 }
 
 // ─── Extract owner number from creds.json ─────────────────────────────────────
-/**
- * After extracting session files, read creds.json → me.id to get the
- * WhatsApp phone number. Saves OWNER_NUMBER to .env and sets global.ownerNumber.
- */
 function extractOwnerFromCreds() {
     try {
         const credsPath = path.join(SESSION_DIR, 'creds.json');
@@ -103,12 +109,6 @@ function extractOwnerFromCreds() {
 }
 
 // ─── downloadSessionData ──────────────────────────────────────────────────────
-/**
- * Decode the SESSION_ID set in global.SESSION_ID and extract session files.
- * Supported formats:
- *   BOTIFY-X=<base64>   — ZIP of WA auth state encoded as base64
- *   MEGA-<megaId>       — MEGA file containing the session zip or creds.json
- */
 async function downloadSessionData(callback) {
     try {
         await fs.promises.mkdir(SESSION_DIR, { recursive: true });
@@ -116,9 +116,7 @@ async function downloadSessionData(callback) {
         const sessionId = global.SESSION_ID || '';
 
         if (sessionId.startsWith('BOTIFY-X=')) {
-            // ── BOTIFY-X base64 format ───────────────────────────────────────
             let encoded = sessionId.slice('BOTIFY-X='.length).trim();
-            // GitHub / URL safe base64 may use * instead of /
             encoded = encoded.replace(/\*/g, '/');
 
             const buffer = Buffer.from(encoded, 'base64');
@@ -128,7 +126,6 @@ async function downloadSessionData(callback) {
                 zip.extractAllTo(SESSION_DIR, true);
                 console.log(color('✅ Session extracted from BOTIFY-X base64.', 'green'));
             } catch (_) {
-                // If it's not a zip, treat as raw creds.json
                 fs.writeFileSync(path.join(SESSION_DIR, 'creds.json'), buffer);
                 console.log(color('✅ Session (creds.json) saved from BOTIFY-X base64.', 'green'));
             }
@@ -137,7 +134,6 @@ async function downloadSessionData(callback) {
             if (typeof callback === 'function') await callback();
 
         } else if (sessionId.startsWith('MEGA-')) {
-            // ── MEGA format ──────────────────────────────────────────────────
             const megaId = sessionId.slice('MEGA-'.length).trim();
             const file   = File.fromURL('mega://' + megaId);
             file.download(async (err, data) => {
@@ -158,7 +154,6 @@ async function downloadSessionData(callback) {
             });
 
         } else {
-            // ── Existing local session ───────────────────────────────────────
             const credsPath = path.join(SESSION_DIR, 'creds.json');
             if (fs.existsSync(credsPath)) {
                 console.log(color('✅ Using existing local session.', 'green'));
@@ -205,5 +200,4 @@ module.exports = {
     createTmpFolder,
     detectPlatform,
     writeEnvKey,
-    GITHUB_REPO,
 };
