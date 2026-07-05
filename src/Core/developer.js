@@ -8,13 +8,16 @@ const { color } = require(path.join(__dirname, '../../lib/color'));
 // All user-specific values come from process.env (the .env file).
 
 // ── SESSION ID ─────────────────────────────────────────────────────────────────
-// Populated from .env automatically.  If missing, botify.js will prompt on console.
 global.SESSION_ID = process.env.SESSION_ID || '';
 
 // ── OWNER NUMBER ───────────────────────────────────────────────────────────────
-// Auto-derived from the session's creds.json (me.id) after session extraction.
-// Stored back to .env as OWNER_NUMBER by bot.js.
 global.ownerNumber = process.env.OWNER_NUMBER || '';
+
+// ── OWNER LID ─────────────────────────────────────────────────────────────────
+// Automatically discovered the first time the owner sends a group command
+// after the bot connects.  Cached here so subsequent group messages skip the
+// expensive groupMetadata scan and go straight to a numeric comparison.
+global.ownerLID = (process.env.OWNER_LID || '').replace(/[^0-9]/g, '') || null;
 
 // ── CUSTOM API URLS (optional — edit .env or leave blank) ─────────────────────
 global.api    = process.env.CUSTOM_API_URL  || '';
