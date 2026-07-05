@@ -313,6 +313,20 @@ function cleanOldMessages(db) {
                 global.timezones   = db.settings.timezone  || 'Africa/Lagos';
                 global.ownername   = db.settings.ownername || 'Mr Stark';
 
+                // Capture the bot's own LID at connection time.
+                // Groups with Member Privacy deliver messages with the sender as a
+                // LID number instead of a phone number. Storing it here — where we
+                // have direct access to state.creds — lets executor.js Pass 1
+                // recognise the owner without any per-message credential lookup.
+                try {
+                    const rawLid = state.creds.me?.lid || Cypher.user?.lid || '';
+                    const numLid = rawLid.replace(/[^0-9]/g, '');
+                    if (numLid && numLid !== global.ownernumber) {
+                        global.ownerLID = numLid;
+                        console.log(cyan(`[BOTIFY-X] 🔑 Bot LID captured: ${numLid}`));
+                    }
+                } catch (_) {}
+
                 console.log(green(`[BOTIFY-X] ✅ Connected as ${Cypher.user?.name || botNum}`));
                 console.log(cyan(`[BOTIFY-X] Owner     : ${global.creator}`));
                 console.log(cyan(`[BOTIFY-X] Mode      : ${db.settings.mode || 'private'}`));
