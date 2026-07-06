@@ -3,8 +3,8 @@
 const { jidNormalizedUser } = require('@whiskeysockets/baileys');
 
 // ── Send the "connected" status message to the owner ("Message Yourself") ─────
-// Retries up to 3 times with increasing delays so the message always arrives
-// even on slow connections where the multi-device key sync takes longer.
+// Sends immediately on connect. If it fails (keys not yet synced), retries
+// once after 5 seconds. That's it — no long delays, no missed messages.
 async function sendConnectionMessage(Cypher, db, detectPlatform) {
     let botVersion = 'unknown';
     try { botVersion = require('../../package.json').version || 'unknown'; } catch (_) {}
@@ -33,16 +33,14 @@ async function sendConnectionMessage(Cypher, db, detectPlatform) {
 ` +
         `» https://t.me/botifyxspace`;
 
-    // Retry up to 3 times: 10s → 20s → 35s after connection open
-    const delays = [10000, 20000, 35000];
-    for (const delay of delays) {
+    try {
+        await Cypher.sendMessage(selfJid, { text: statusMsg });
+    } catch (_) {
+        // First attempt failed — retry once after 5 seconds
         try {
-            await new Promise((r) => setTimeout(r, delay));
+            await new Promise((r) => setTimeout(r, 5000));
             await Cypher.sendMessage(selfJid, { text: statusMsg });
-            return; // sent successfully — stop retrying
-        } catch (_) {
-            // failed — loop continues to next delay
-        }
+        } catch (_) {}
     }
 }
 
