@@ -248,39 +248,6 @@ async function processMessage(Cypher, msg, db, plugins, saveDatabase, loadBlackl
                 isAdmins ? 'green' : 'yellow'));
         }
 
-        // ── 7. Auto-owner claim ───────────────────────────────────────────────
-        // If no custom owner has been set, the first person to send a private
-        // DM to the bot (within the 5-min window opened at connect) is
-        // automatically registered as the owner — zero config needed.
-        if (global.pendingOwnerClaim && !isGroup) {
-            const claimedNum = numOnly(sender);
-            if (claimedNum) {
-                // Close the window
-                global.pendingOwnerClaim = false;
-                if (global.ownerClaimTimer) {
-                    clearTimeout(global.ownerClaimTimer);
-                    global.ownerClaimTimer = null;
-                }
-                // Update all globals
-                global.ownerNumber  = claimedNum;
-                global.ownernumber  = claimedNum;
-                global.creator      = `${claimedNum}@s.whatsapp.net`;
-                // Clear any stale LID — it belongs to the old (bot) number
-                global.ownerLID     = (process.env.OWNER_LID || '').replace(/[^0-9]/g, '') || null;
-                // Persist phone number to .env
-                writeEnvKey('OWNER_NUMBER', claimedNum);
-                process.env.OWNER_NUMBER = claimedNum;
-                console.log(color(`[BOTIFY-X] ✅ Owner auto-registered: ${claimedNum}`, 'green'));
-                isCreator = true;
-                await Cypher.sendMessage(chat, {
-                    text: `✅ *You've been registered as the BotifyX owner!*\n\n` +
-                          `📱 Your number: *${claimedNum}*\n\n` +
-                          `You can now control the bot from groups too.\n` +
-                          `_This was a one-time setup — your number is saved permanently._`,
-                }, { quoted: m });
-            }
-        }
-
         // ── 7b. Auto-moderation ───────────────────────────────────────────────
         // Must run BEFORE the mode gate so antilink/antitag/antibadword fire
         // even in private mode when a regular member (non-owner) sends a message.
