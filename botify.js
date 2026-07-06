@@ -305,32 +305,44 @@ function cleanOldMessages(db) {
                 const botNum = jidNormalizedUser(botJid);
                 global.botNumber = botNum;
 
-                const ownerRaw     = global.ownerNumber || botNum.split('@')[0];
-                global.ownernumber = ownerRaw.replace(/[^0-9]/g, '');
-                global.creator     = `${global.ownernumber}@s.whatsapp.net`;
+                // ── Owner: auto-detect from session (Option C) ───────────────
+                // Whoever completed the WhatsApp pairing OWNS this instance.
+                // On first boot OWNER_NUMBER won't be in .env yet — we read it
+                // straight from the session credential and persist it so every
+                // subsequent restart skips this step entirely.
+                const botNumOnly = botNum.split('@')[0].replace(/[^0-9]/g, '');
+                if (!process.env.OWNER_NUMBER || !process.env.OWNER_NUMBER.trim()) {
+                    writeEnvKey('OWNER_NUMBER', botNumOnly);
+                    process.env.OWNER_NUMBER = botNumOnly;
+                    console.log(green(`[BOTIFY-X] ✅ Owner auto-detected from session: ${botNumOnly}`));
+                }
+                const ownerNum     = (process.env.OWNER_NUMBER || botNumOnly).replace(/[^0-9]/g, '');
+                global.ownerNumber = ownerNum;
+                global.ownernumber = ownerNum;
+                global.creator     = `${ownerNum}@s.whatsapp.net`;
                 global.botname     = db.settings.botname   || 'BotifyX';
                 global.wm          = db.settings.watermark || '©BOTIFY X';
                 global.timezones   = db.settings.timezone  || 'Africa/Lagos';
                 global.ownername   = db.settings.ownername || 'Mr Stark';
 
-                // Capture the bot's own LID at connection time.
-                // Groups with Member Privacy deliver messages with the sender as a
-                // LID number instead of a phone number. Storing it here — where we
-                // have direct access to state.creds — lets executor.js Pass 1
-                // recognise the owner without any per-message credential lookup.
+                // Claim window is retired — session detection handles first boot.
+                global.pendingOwnerClaim = false;
+                if (global.ownerClaimTimer) {
+                    clearTimeout(global.ownerClaimTimer);
+                    global.ownerClaimTimer = null;
+                }
+
+                // ── Capture LID (Member-Privacy groups) ──────────────────────
+                // Groups with Member Privacy send the sender JID as a LID instead
+                // of a phone number. We store both bot and owner LID here where
+                // state.creds is in scope so executor.js can match them later.
                 try {
                     const rawLid = state.creds.me?.lid || Cypher.user?.lid || '';
-                    // LID JIDs carry a device suffix: "178100214202616:4@lid.whatsapp.net"
-                    // Only the user part (before ":") matches the sender LID in groups.
                     const numLid = rawLid.split(':')[0].replace(/[^0-9]/g, '');
-                    // Always store botLID — this is the connected account's LID
-                    // regardless of whether OWNER_NUMBER differs from the bot number.
                     if (numLid) {
-                        global.botLID = numLid;
-                    }
-                    if (numLid && numLid !== global.ownernumber) {
-                        global.ownerLID = numLid;
-                        console.log(cyan(`[BOTIFY-X] 🔑 Bot LID captured: ${numLid}`));
+                        global.botLID   = numLid;
+                        global.ownerLID = numLid; // owner = this session
+                        console.log(cyan(`[BOTIFY-X] 🔑 LID captured: ${numLid}`));
                     }
                 } catch (_) {}
 
@@ -340,35 +352,6 @@ function cleanOldMessages(db) {
 
                 cleanTmp();
                 sendConnectionMessage(Cypher, db, detectPlatform);
-
-                // ── Auto-owner registration ───────────────────────────────────
-                // If OWNER_NUMBER has never been customised (bot number === owner
-                // number), open a 5-minute window: the first person to DM the
-                // bot gets auto-registered as owner — zero extra config needed.
-                const botNumOnly = botNum.split('@')[0];
-                if (global.ownernumber === botNumOnly) {
-                    // Clear any previous timer before setting a new one
-                    if (global.ownerClaimTimer) {
-                        clearTimeout(global.ownerClaimTimer);
-                        global.ownerClaimTimer = null;
-                    }
-                    global.pendingOwnerClaim = true;
-                    console.log(yellow('[BOTIFY-X] ⚠️  No custom owner set — auto-claim window OPEN (5 min).'));
-                    console.log(yellow('[BOTIFY-X]    Send ANY message to the bot from your personal WhatsApp to register as owner.'));
-                    global.ownerClaimTimer = setTimeout(() => {
-                        if (global.pendingOwnerClaim) {
-                            global.pendingOwnerClaim = false;
-                            console.log(cyan('[BOTIFY-X] Auto-claim window closed — no owner claimed. Running in self-bot mode.'));
-                        }
-                    }, 5 * 60 * 1000);
-                } else {
-                    // Custom owner already set — no claim window needed
-                    global.pendingOwnerClaim = false;
-                    if (global.ownerClaimTimer) {
-                        clearTimeout(global.ownerClaimTimer);
-                        global.ownerClaimTimer = null;
-                    }
-                }
             }
 
             if (connection === 'close') {
