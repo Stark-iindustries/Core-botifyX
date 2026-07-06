@@ -10,10 +10,7 @@ async function sendConnectionMessage(Cypher, db, detectPlatform) {
     const prefix   = db.settings.prefix ?? '.';
     const mode     = db.settings.mode   || 'private';
 
-    // Strip device suffix (:4) from Cypher.user.id so the message goes to
-    // the bare JID (number@s.whatsapp.net) which is the 'Message Yourself' chat.
-    // Using the device JID (number:4@s.whatsapp.net) routes to a device session
-    // and never appears in Message Yourself.
+    // Bare JID (no device suffix) = Message Yourself chat
     const rawId  = global.Cypher?.user?.id || '';
     const target = rawId.split(':')[0] + '@s.whatsapp.net';
 
@@ -32,9 +29,15 @@ async function sendConnectionMessage(Cypher, db, detectPlatform) {
         `» https://t.me/+yxIy3nwj6Ig4YjM0\n` +
         `» https://t.me/botifyxspace`;
 
+    // 3 s grace period lets the session fully establish pre-keys before
+    // attempting to encrypt a self-message. Then subscribe to own presence
+    // to open the chat channel before sending.
+    await new Promise((r) => setTimeout(r, 3000));
+
     for (const delay of [0, 5000]) {
         try {
             if (delay) await new Promise((r) => setTimeout(r, delay));
+            await global.Cypher.presenceSubscribe(target).catch(() => {});
             await global.Cypher.sendMessage(target, { text: statusMsg });
             console.log(`[BOTIFY-X] ✅ Connection message sent to ${target}`);
             return;
