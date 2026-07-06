@@ -10,15 +10,17 @@ async function sendConnectionMessage(Cypher, db, detectPlatform) {
     const prefix   = db.settings.prefix ?? '.';
     const mode     = db.settings.mode   || 'private';
 
+    // Strip device suffix (:4) from Cypher.user.id so the message goes to
+    // the bare JID (number@s.whatsapp.net) which is the 'Message Yourself' chat.
+    // Using the device JID (number:4@s.whatsapp.net) routes to a device session
+    // and never appears in Message Yourself.
     const rawId  = global.Cypher?.user?.id || '';
-    const target = rawId;
+    const target = rawId.split(':')[0] + '@s.whatsapp.net';
 
-    if (!target) {
+    if (!rawId) {
         console.error('[BOTIFY-X] ❌ Connection message skipped -- Cypher.user.id not available.');
         return;
     }
-
-    console.log(`[BOTIFY-X] 🔍 target JID: ${target}`);
 
     const statusMsg =
         `——『 BOTIFY-X 』——\n` +
@@ -33,11 +35,11 @@ async function sendConnectionMessage(Cypher, db, detectPlatform) {
     for (const delay of [0, 5000]) {
         try {
             if (delay) await new Promise((r) => setTimeout(r, delay));
-            const result = await global.Cypher.sendMessage(target, { text: statusMsg });
-            console.log(`[BOTIFY-X] ✅ Connection message sent. key: ${JSON.stringify(result?.key)}`);
+            await global.Cypher.sendMessage(target, { text: statusMsg });
+            console.log(`[BOTIFY-X] ✅ Connection message sent to ${target}`);
             return;
         } catch (err) {
-            console.error(`[BOTIFY-X] ⚠️  Connection message failed (delay=${delay}ms): ${err.message}`);
+            console.error(`[BOTIFY-X] ⚠️  Connection message failed: ${err.message}`);
         }
     }
     console.error('[BOTIFY-X] ❌ Connection message could not be delivered after 2 attempts.');
