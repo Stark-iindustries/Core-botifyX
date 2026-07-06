@@ -10,17 +10,15 @@ async function sendConnectionMessage(Cypher, db, detectPlatform) {
     const prefix   = db.settings.prefix ?? '.';
     const mode     = db.settings.mode   || 'private';
 
-    // Message Yourself requires the bot's own socket JID (with device suffix
-    // e.g. 234xxx:5@s.whatsapp.net) -- NOT the bare owner JID. Using the bare
-    // JID causes Baileys to silently accept the send but WhatsApp drops it.
-    const target = global.Cypher?.user?.id;
+    const rawId  = global.Cypher?.user?.id || '';
+    const target = rawId;
 
     if (!target) {
         console.error('[BOTIFY-X] ❌ Connection message skipped -- Cypher.user.id not available.');
         return;
     }
 
-    console.log(`[BOTIFY-X] Sending connection message to: ${target}`);
+    console.log(`[BOTIFY-X] 🔍 target JID: ${target}`);
 
     const statusMsg =
         `——『 BOTIFY-X 』——\n` +
@@ -35,11 +33,11 @@ async function sendConnectionMessage(Cypher, db, detectPlatform) {
     for (const delay of [0, 5000]) {
         try {
             if (delay) await new Promise((r) => setTimeout(r, delay));
-            await global.Cypher.sendMessage(target, { text: statusMsg });
-            console.log('[BOTIFY-X] ✅ Connection message sent to owner.');
+            const result = await global.Cypher.sendMessage(target, { text: statusMsg });
+            console.log(`[BOTIFY-X] ✅ Connection message sent. key: ${JSON.stringify(result?.key)}`);
             return;
         } catch (err) {
-            console.error(`[BOTIFY-X] ⚠️ Connection message attempt failed: ${err.message}`);
+            console.error(`[BOTIFY-X] ⚠️  Connection message failed (delay=${delay}ms): ${err.message}`);
         }
     }
     console.error('[BOTIFY-X] ❌ Connection message could not be delivered after 2 attempts.');
