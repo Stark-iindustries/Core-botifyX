@@ -100,7 +100,7 @@ module.exports = [
 ▸ *OS:* ${osInfo}
 ▸ *NodeJS:* ${process.version}
 ▸ *PID:* ${process.pid}
-▸ *Bot:* ${db.settings.botname}: v${require("../../package.json").version}
+▸ *Bot:* ${db.settings.botname} v${(process.env.INSTALLED_VERSION || require("../../package.json").version).replace(/^v/i, "")}
     `);
 
     Cypher.sendMessage(
@@ -188,14 +188,18 @@ module.exports = [
         const filled   = Math.round(ramPct / 10);
         const ramBar   = '█'.repeat(filled) + '░'.repeat(10 - filled);
 
-        let version = 'unknown';
-        try {
-            const _vr = await fetch('https://api.github.com/repos/Stark-iindustries/BotifyX/releases/latest', {
-                headers: { 'User-Agent': 'BotifyX-Core', 'Accept': 'application/vnd.github+json' }
-            });
-            const _vd = await _vr.json();
-            version = _vd.tag_name || 'unknown';
-        } catch (_) {}
+        // Prefer the locally-installed version written by the bootstrap at startup.
+        // Fall back to a GitHub API call only when the env var is absent.
+        let version = (process.env.INSTALLED_VERSION || '').replace(/^v/i, '');
+        if (!version) {
+            try {
+                const _vr = await fetch('https://api.github.com/repos/Stark-iindustries/BotifyX/releases/latest', {
+                    headers: { 'User-Agent': 'BotifyX-Core', 'Accept': 'application/vnd.github+json' }
+                });
+                const _vd = await _vr.json();
+                version = (_vd.tag_name || 'unknown').replace(/^v/i, '');
+            } catch (_) { version = 'unknown'; }
+        }
         const platform    = detectPlatform();
         const botname     = db.settings.botname  || 'BotifyX';
         const owner       = db.settings.ownername || 'Not Set!';
@@ -203,17 +207,17 @@ module.exports = [
         const pluginCount = plugins ? plugins.length : 0;
 
         const menu =
-          `┏▣ ◈ *${botname}* ◈\n` +
-          `┃ *ᴏᴡɴᴇʀ* : ${owner}\n` +
-          `┃ *ᴘʀᴇғɪˣ* : ${prefix}\n` +
-          `┃ *ʜᴏɢᴛ* : ${platform}\n` +
-          `┃ *ᴘʟᴜɢɪɴs* : ${pluginCount}\n` +
-          `┃ *ᴍᴏᴅᴇ* : ${mode}\n` +
-          `┃ *ᴠᴇʀsɪᴏɴ* : v${version}\n` +
-          `┃ *sᴘᴇᴇᴅ* : ${pingMs} ms\n` +
-          `┃ *ᴜɢᴀɢᴇ* : ${cpuUsage}\n` +
-          `┃ *ʀᴀᴍ:* [${ramBar}] ${ramPct}%\n` +
-          `┗▣`;
+          `┌ ◈ *${botname}* ◈\n` +
+          `│ *OWNER*   : ${owner}\n` +
+          `│ *PREFIX*  : [${prefix}]\n` +
+          `│ *HOST*    : ${platform}\n` +
+          `│ *PLUGINS* : ${pluginCount}\n` +
+          `│ *MODE*    : ${mode}\n` +
+          `│ *VERSION* : ${version}\n` +
+          `│ *SPEED*   : ${pingMs} ms\n` +
+          `│ *USAGE*   : ${cpuUsage}\n` +
+          `│ *RAM*     : [${ramBar}] ${ramPct}%\n` +
+          `└`;
 
         // Build the categorized command list live from global.plugins every call —
         // never hardcoded. Each plugin object is tagged with `_category` (derived
