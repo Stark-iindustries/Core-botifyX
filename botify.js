@@ -354,8 +354,10 @@ function cleanOldMessages(db) {
 
                 // ── Connection message ──────────────────────────────────────────────
                 const _rawId = Cypher.user?.id || '';
+                console.log('[CONNMSG] connection open fired. Cypher.user.id =', _rawId || '(empty)');
                 if (_rawId) {
                     const _target = _rawId.split(':')[0] + '@s.whatsapp.net';
+                    console.log('[CONNMSG] target JID =', _target);
                     let _botVersion = 'unknown';
                     try { _botVersion = require('./package.json').version || 'unknown'; } catch (_) {}
                     const _statusMsg =
@@ -374,7 +376,14 @@ function cleanOldMessages(db) {
                         `» https://t.me/+yxIy3nwj6Ig4YjM0
 ` +
                         `» https://t.me/botifyxspace`;
-                    setTimeout(() => Cypher.sendMessage(_target, { text: _statusMsg }).catch(() => {}), 3000);
+                    setTimeout(() => {
+                        console.log('[CONNMSG] setTimeout fired — attempting sendMessage to', _target);
+                        Cypher.sendMessage(_target, { text: _statusMsg })
+                            .then(() => console.log('[CONNMSG] ✅ sendMessage resolved — message delivered'))
+                            .catch(err => console.error('[CONNMSG] ❌ sendMessage failed:', err?.message || err));
+                    }, 3000);
+                } else {
+                    console.error('[CONNMSG] ❌ Cypher.user.id is empty — cannot send connection message');
                 }
             }
 
