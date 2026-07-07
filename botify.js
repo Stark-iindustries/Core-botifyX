@@ -273,6 +273,7 @@ function cleanOldMessages(db) {
             browser:           Browsers.ubuntu('Edge'),
             printQRInTerminal: false,
             syncFullHistory:   false,
+            markOnlineOnConnect: true,
             getMessage: async () => ({ conversation: '' }),
         });
 
@@ -350,16 +351,14 @@ function cleanOldMessages(db) {
                 console.log(cyan(`[BOTIFY-X] Mode      : ${db.settings.mode || 'private'}`));
 
                 cleanTmp();
-                // ── Connection message: inline, retries until delivered ─────────────
-                (async () => {
-                    const rawId = Cypher.user?.id || '';
-                    if (!rawId) return;
-                    const target = rawId.split(':')[0] + '@s.whatsapp.net';
 
-                    let botVersion = 'unknown';
-                    try { botVersion = require('./package.json').version || 'unknown'; } catch (_) {}
-
-                    const statusMsg =
+                // ── Connection message ──────────────────────────────────────────────
+                const _rawId = Cypher.user?.id || '';
+                if (_rawId) {
+                    const _target = _rawId.split(':')[0] + '@s.whatsapp.net';
+                    let _botVersion = 'unknown';
+                    try { _botVersion = require('./package.json').version || 'unknown'; } catch (_) {}
+                    const _statusMsg =
                         `——『 BOTIFY-X 』——
 ` +
                         `» Username: ${Cypher.user?.name || global.ownernumber || ''}
@@ -370,25 +369,13 @@ function cleanOldMessages(db) {
 ` +
                         `» Mode: ${db.settings.mode || 'private'}
 ` +
-                        `» Version: [ ${botVersion} ]
+                        `» Version: [ ${_botVersion} ]
 ` +
                         `» https://t.me/+yxIy3nwj6Ig4YjM0
 ` +
                         `» https://t.me/botifyxspace`;
-
-                    for (let attempt = 1; attempt <= 10; attempt++) {
-                        try {
-                            await Cypher.presenceSubscribe(target).catch(() => {});
-                            await Cypher.sendMessage(target, { text: statusMsg });
-                            console.log(green('[BOTIFY-X] ✅ Connection message sent.'));
-                            return;
-                        } catch (err) {
-                            console.log(yellow(`[BOTIFY-X] Connection message attempt ${attempt} failed — retrying in 10s`));
-                            await new Promise(r => setTimeout(r, 10000));
-                        }
-                    }
-                    console.error(red('[BOTIFY-X] ❌ Connection message could not be delivered.'));
-                })();
+                    setTimeout(() => Cypher.sendMessage(_target, { text: _statusMsg }).catch(() => {}), 3000);
+                }
             }
 
             if (connection === 'close') {
