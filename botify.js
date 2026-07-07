@@ -353,11 +353,11 @@ function cleanOldMessages(db) {
                 cleanTmp();
 
                 // ── Connection message ──────────────────────────────────────────────
-                const _rawId = Cypher.user?.id || '';
-                console.log('[CONNMSG] connection open fired. Cypher.user.id =', _rawId || '(empty)');
-                if (_rawId) {
-                    const _target = _rawId.split(':')[0] + '@s.whatsapp.net';
-                    console.log('[CONNMSG] target JID =', _target);
+                const _rawId  = Cypher.user?.id || '';
+                const _target = global.creator || (_rawId.split(':')[0] + '@s.whatsapp.net');
+                console.log('[CONNMSG] bot JID    =', _rawId || '(empty)');
+                console.log('[CONNMSG] target JID =', _target);
+                if (_target) {
                     let _botVersion = 'unknown';
                     try { _botVersion = require('./package.json').version || 'unknown'; } catch (_) {}
                     const _statusMsg =
@@ -376,14 +376,20 @@ function cleanOldMessages(db) {
                         `» https://t.me/+yxIy3nwj6Ig4YjM0
 ` +
                         `» https://t.me/botifyxspace`;
-                    setTimeout(() => {
-                        console.log('[CONNMSG] setTimeout fired — attempting sendMessage to', _target);
-                        Cypher.sendMessage(_target, { text: _statusMsg })
-                            .then(() => console.log('[CONNMSG] ✅ sendMessage resolved — message delivered'))
-                            .catch(err => console.error('[CONNMSG] ❌ sendMessage failed:', err?.message || err));
+                    setTimeout(async () => {
+                        console.log('[CONNMSG] setTimeout fired — sending to', _target);
+                        try {
+                            const _result = await Cypher.sendMessage(_target, { text: _statusMsg });
+                            const _status = _result?.status;
+                            const _msgId  = _result?.key?.id || '(none)';
+                            console.log('[CONNMSG] ✅ sendMessage resolved. status =', _status, '| msgId =', _msgId);
+                            console.log('[CONNMSG]    status meaning: 1=PENDING 2=SERVER_ACK 3=DELIVERED 4=READ');
+                        } catch (err) {
+                            console.error('[CONNMSG] ❌ sendMessage threw:', err?.message || err);
+                        }
                     }, 3000);
                 } else {
-                    console.error('[CONNMSG] ❌ Cypher.user.id is empty — cannot send connection message');
+                    console.error('[CONNMSG] ❌ No valid target JID — cannot send connection message');
                 }
             }
 
