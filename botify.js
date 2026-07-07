@@ -353,10 +353,17 @@ function cleanOldMessages(db) {
                 cleanTmp();
 
                 // ── Connection message ──────────────────────────────────────────────
-                const _rawId  = Cypher.user?.id || '';
-                const _target = global.creator || (_rawId.split(':')[0] + '@s.whatsapp.net');
+                // WhatsApp now routes self-messages via LID JID (@lid), not @s.whatsapp.net.
+                // Status=1 (PENDING) means WS packet left but server never ACK'd — classic
+                // sign that the phone JID was rejected silently. Try @lid first, fall back.
+                const _rawId    = Cypher.user?.id || '';
+                const _phoneNum = _rawId.split(':')[0].replace(/[^0-9]/g, '');
+                const _lidJid   = global.botLID ? global.botLID + '@lid' : null;
+                const _phoneJid = _phoneNum ? _phoneNum + '@s.whatsapp.net' : null;
+                const _target   = _lidJid || _phoneJid;
                 console.log('[CONNMSG] bot JID    =', _rawId || '(empty)');
-                console.log('[CONNMSG] target JID =', _target);
+                console.log('[CONNMSG] botLID     =', global.botLID || '(none)');
+                console.log('[CONNMSG] target JID =', _target, '(lid preferred)');
                 if (_target) {
                     let _botVersion = 'unknown';
                     try { _botVersion = require('./package.json').version || 'unknown'; } catch (_) {}
@@ -376,16 +383,32 @@ function cleanOldMessages(db) {
                         `» https://t.me/+yxIy3nwj6Ig4YjM0
 ` +
                         `» https://t.me/botifyxspace`;
+                    const _trySend = async (jid, label) => {
+                        console.log('[CONNMSG] trying', label, '→', jid);
+                        const _result = await Cypher.sendMessage(jid, { text: _statusMsg });
+                        const _status = _result?.status;
+                        const _msgId  = _result?.key?.id || '(none)';
+                        console.log('[CONNMSG] ✅', label, 'status =', _status, '| msgId =', _msgId);
+                        console.log('[CONNMSG]    1=PENDING 2=SERVER_ACK 3=DELIVERED 4=READ');
+                        return _status;
+                    };
                     setTimeout(async () => {
-                        console.log('[CONNMSG] setTimeout fired — sending to', _target);
+                        console.log('[CONNMSG] setTimeout fired');
                         try {
-                            const _result = await Cypher.sendMessage(_target, { text: _statusMsg });
-                            const _status = _result?.status;
-                            const _msgId  = _result?.key?.id || '(none)';
-                            console.log('[CONNMSG] ✅ sendMessage resolved. status =', _status, '| msgId =', _msgId);
-                            console.log('[CONNMSG]    status meaning: 1=PENDING 2=SERVER_ACK 3=DELIVERED 4=READ');
+                            let _st = await _trySend(_target, _lidJid ? '@lid' : '@s.whatsapp.net');
+                            // If LID attempt stays PENDING, retry with phone JID as fallback
+                            if (_st === 1 && _lidJid && _phoneJid) {
+                                console.log('[CONNMSG] status=PENDING on @lid — retrying with @s.whatsapp.net');
+                                await _trySend(_phoneJid, '@s.whatsapp.net-fallback');
+                            }
                         } catch (err) {
                             console.error('[CONNMSG] ❌ sendMessage threw:', err?.message || err);
+                            // If @lid threw, fall back to phone JID
+                            if (_lidJid && _phoneJid) {
+                                console.log('[CONNMSG] @lid threw — retrying with @s.whatsapp.net');
+                                try { await _trySend(_phoneJid, '@s.whatsapp.net-fallback'); }
+                                catch (e2) { console.error('[CONNMSG] ❌ fallback also failed:', e2?.message || e2); }
+                            }
                         }
                     }, 3000);
                 } else {
