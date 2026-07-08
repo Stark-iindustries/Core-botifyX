@@ -207,8 +207,11 @@ module.exports = [
         const owner       = db.settings.ownername || 'Not Set!';
         const mode        = db.settings.mode       || 'private';
         const pluginCount = plugins ? plugins.length : 0;
+        const uptime      = runtime(process.uptime());
+        const nodeVer     = process.version;
 
-        // CypherX-style header: plain text labels, ┌▣ / └▣ box corners
+        // Header is intentionally 13 lines so WhatsApp's "Read more" fold
+        // lands right after └▣, before the first command category.
         const menu =
           `┌▣ ◈ *${botname}* ◈\n` +
           `│ *Owner* : ${owner}\n` +
@@ -218,8 +221,10 @@ module.exports = [
           `│ *Mode* : ${mode}\n` +
           `│ *Version* : ${version}\n` +
           `│ *Speed* : ${pingMs} ms\n` +
+          `│ *Uptime* : ${uptime}\n` +
+          `│ *Node* : ${nodeVer}\n` +
           `│ *Usage* : ${usageStr}\n` +
-          `│ *Ram*: [${ramBar}] ${ramPct}%\n` +
+          `│ *Ram* : [${ramBar}] ${ramPct}%\n` +
           `└▣`;
 
         // CypherX-style command list: ┌▣ ◈ CAT MENU ◈ / │ ▶▶ CMD / └▣, ALL CAPS
