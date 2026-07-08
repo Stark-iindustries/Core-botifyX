@@ -245,6 +245,7 @@ module.exports = [
             for (const cmd of [...categories.get(cat)].sort()) {
                 commandList += `│➽ ${cmd}\n`;
             }
+            commandList += `└▣\n`;
         }
 
         // Send standalone (no quote) — matches CypherX behaviour
