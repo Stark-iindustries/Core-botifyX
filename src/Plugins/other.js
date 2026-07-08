@@ -176,20 +176,21 @@ module.exports = [
       command: ['menu'],
       operate: async ({ Cypher, m, db, plugins, prefix }) => {
         const t0 = performance.now();
-        const loadingMsg = await Cypher.sendMessage(m.chat, { text: 'Loading menu...' }, { quoted: m });
-        const pingMs = (performance.now() - t0).toFixed(2);
 
-        // Gather live data concurrently
+        // Gather live data
         const [cpuUsage] = await Promise.all([getCPUUsage()]);
+        const pingMs = (performance.now() - t0).toFixed(2);
 
         const totalRam = os.totalmem();
         const usedRam  = totalRam - os.freemem();
         const ramPct   = Math.round((usedRam / totalRam) * 100);
         const filled   = Math.round(ramPct / 10);
         const ramBar   = '█'.repeat(filled) + '░'.repeat(10 - filled);
+        // Long RAM string (e.g. "1.2 GB of 8.0 GB") keeps header tall enough
+        // for WhatsApp to show the "Read more" collapse button.
+        const usageStr = formatSize(usedRam) + ' of ' + formatSize(totalRam);
 
-        // Prefer the locally-installed version written by the bootstrap at startup.
-        // Fall back to a GitHub API call only when the env var is absent.
+        // Prefer the locally-installed version; fall back to GitHub API.
         let version = (process.env.INSTALLED_VERSION || '').replace(/^v/i, '');
         if (!version) {
             try {
@@ -201,27 +202,26 @@ module.exports = [
             } catch (_) { version = 'unknown'; }
         }
         const platform    = detectPlatform();
-        const botname     = db.settings.botname  || 'BotifyX';
+        const botname     = db.settings.botname   || 'BotifyX';
         const owner       = db.settings.ownername || 'Not Set!';
-        const mode        = db.settings.mode     || 'private';
+        const mode        = db.settings.mode       || 'private';
         const pluginCount = plugins ? plugins.length : 0;
 
+        // CypherX-style header: plain text labels, ┌▣ / └▣ box corners
         const menu =
-          `┌ ◈ *${botname}* ◈\n` +
-          `│ *OWNER*   : ${owner}\n` +
-          `│ *PREFIX*  : [${prefix}]\n` +
-          `│ *HOST*    : ${platform}\n` +
-          `│ *PLUGINS* : ${pluginCount}\n` +
-          `│ *MODE*    : ${mode}\n` +
-          `│ *VERSION* : ${version}\n` +
-          `│ *SPEED*   : ${pingMs} ms\n` +
-          `│ *USAGE*   : ${cpuUsage}\n` +
-          `│ *RAM*     : [${ramBar}] ${ramPct}%\n` +
-          `└`;
+          `┌▣ ◈ ${botname} ◈\n` +
+          `│ OWNER : ${owner}\n` +
+          `│ PREFIX : [${prefix}]\n` +
+          `│ HOST : ${platform}\n` +
+          `│ PLUGINS : ${pluginCount}\n` +
+          `│ MODE : ${mode}\n` +
+          `│ VERSION : ${version}\n` +
+          `│ SPEED : ${pingMs} ms\n` +
+          `│ USAGE : ${usageStr}\n` +
+          `│ RAM: [${ramBar}] ${ramPct}%\n` +
+          `└▣`;
 
-        // Build the categorized command list live from global.plugins every call —
-        // never hardcoded. Each plugin object is tagged with `_category` (derived
-        // from its source file name) when loaded in botify.js.
+        // CypherX-style command list: ┌▣ ◈ CAT MENU ◈ / │ ▶▶ CMD / └▣, ALL CAPS
         const live = Array.isArray(plugins) ? plugins : (global.plugins || []);
         const categories = new Map();
         for (const p of live) {
@@ -230,19 +230,20 @@ module.exports = [
             const cmds = Array.isArray(p.command) ? p.command : [p.command];
             if (!categories.has(cat)) categories.set(cat, new Set());
             const set = categories.get(cat);
-            cmds.forEach(c => { if (c) set.add(String(c).toLowerCase()); });
+            cmds.forEach(c => { if (c) set.add(String(c).toUpperCase()); });
         }
 
         let commandList = '';
         for (const cat of [...categories.keys()].sort()) {
-            commandList += `\n╭───「 *${cat} MENU* 」\n`;
+            commandList += `\n┌▣ ◈ ${cat} MENU ◈\n`;
             for (const cmd of [...categories.get(cat)].sort()) {
-                commandList += `│ ➽ ${cmd}\n`;
+                commandList += `│ ▶▶ ${cmd}\n`;
             }
-            commandList += `╰────────────\n`;
+            commandList += `└▣\n`;
         }
 
-        await Cypher.sendMessage(m.chat, { text: menu + '\n' + commandList }, { quoted: m });
+        // Send standalone (no quote) — matches CypherX behaviour
+        await Cypher.sendMessage(m.chat, { text: menu + '\n' + commandList });
       }
     },
     {
