@@ -9,6 +9,8 @@ const { initChatEntry, saveBlacklist } = require('./database');
 const { writeEnvKey }                  = require('./bot');
 const GroupDB                          = require('./group');
 const { color }                        = require('../../lib/color');
+const { fetchMp3DownloadUrl, fetchVideoDownloadUrl } = require('../../lib/youtube');
+const { Telesticker }                                = require('../../lib/telegram');
 
 const kickQueue = new Map();
 const msgCache  = new Map();
@@ -428,6 +430,9 @@ async function processMessage(Cypher, msg, db, plugins, saveDatabase, loadBlackl
             isGroupAdmins: isAdmins,
             isGroupOwner:  groupMetadata?.owner ? numOnly(sender) === numOnly(groupMetadata.owner) : false,
             plugins,
+            fetchMp3DownloadUrl,
+            fetchVideoDownloadUrl,
+            Telesticker,
         };
 
         // ── 18. Sticker alias ─────────────────────────────────────────────────
