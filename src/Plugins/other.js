@@ -176,6 +176,7 @@ module.exports = [
       command: ['menu'],
       operate: async ({ Cypher, m, db, plugins, prefix }) => {
         const t0 = performance.now();
+        await Cypher.sendMessage(m.chat, { text: 'Loading menu...' }, { quoted: m });
 
         // Gather live data
         const [cpuUsage] = await Promise.all([getCPUUsage()]);
