@@ -211,15 +211,15 @@ module.exports = [
         // CypherX-style header: plain text labels, ┌▣ / └▣ box corners
         const menu =
           `┌▣ ◈ ${botname} ◈\n` +
-          `│ OWNER : ${owner}\n` +
-          `│ PREFIX : [${prefix}]\n` +
-          `│ HOST : ${platform}\n` +
-          `│ PLUGINS : ${pluginCount}\n` +
-          `│ MODE : ${mode}\n` +
-          `│ VERSION : ${version}\n` +
-          `│ SPEED : ${pingMs} ms\n` +
-          `│ USAGE : ${usageStr}\n` +
-          `│ RAM: [${ramBar}] ${ramPct}%\n` +
+          `│ *Owner* : ${owner}\n` +
+          `│ *Prefix* : [${prefix}]\n` +
+          `│ *Host* : ${platform}\n` +
+          `│ *Plugins* : ${pluginCount}\n` +
+          `│ *Mode* : ${mode}\n` +
+          `│ *Version* : ${version}\n` +
+          `│ *Speed* : ${pingMs} ms\n` +
+          `│ *Usage* : ${usageStr}\n` +
+          `│ *Ram*: [${ramBar}] ${ramPct}%\n` +
           `└▣`;
 
         // CypherX-style command list: ┌▣ ◈ CAT MENU ◈ / │ ▶▶ CMD / └▣, ALL CAPS
@@ -259,8 +259,8 @@ module.exports = [
     react: "🔸",
     operate: async ({ m, Cypher, reply }) => {
       try {
-        const repoUrl = 'https://github.com/YOUR_GITHUB_USERNAME/botify-x';
-        const { data } = await axios.get('https://api.github.com/repos/YOUR_GITHUB_USERNAME/botify-x');
+        const repoUrl = 'https://github.com/stark-iindustries/BotifyX';
+        const { data } = await axios.get('https://api.github.com/repos/stark-iindustries/BotifyX');
         const repoInfo = `
         *🔹 BOT REPOSITORY 🔹*
         
