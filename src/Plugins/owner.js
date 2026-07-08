@@ -643,43 +643,4 @@ console.log(`${commands}`)
     }
 },
 
-{
-    command: ['conntest'],
-    operate: async ({ Cypher, m, reply, isCreator, db }) => {
-        if (!isCreator) return;
-
-        let botVersion = 'unknown';
-        try { botVersion = require('../../package.json').version || 'unknown'; } catch (_) {}
-
-        const rawId   = global.Cypher?.user?.id || '';
-        const bareJid = rawId.split(':')[0] + '@s.whatsapp.net';
-
-        const statusMsg =
-            `——『 BOTIFY-X 』——
-` +
-            `» Username: ${global.Cypher?.user?.name || global.ownernumber}
-` +
-            `» Platform: ${process.platform}
-` +
-            `» Prefix: [ ${db.settings.prefix ?? '.'} ]
-` +
-            `» Mode: ${db.settings.mode || 'private'}
-` +
-            `» Version: [ ${botVersion} ]
-` +
-            `» https://t.me/+yxIy3nwj6Ig4YjM0
-` +
-            `» https://t.me/botifyxspace`;
-
-        await reply(`Testing connection message...\nTarget: ${bareJid}`);
-
-        try {
-            await global.Cypher.presenceSubscribe(bareJid).catch(() => {});
-            const result = await global.Cypher.sendMessage(bareJid, { text: statusMsg });
-            await reply(`Result key: ${JSON.stringify(result?.key)}`);
-        } catch (err) {
-            await reply(`Failed: ${err.message}`);
-        }
-    }
-},
 ];
