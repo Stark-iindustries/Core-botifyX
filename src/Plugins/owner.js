@@ -37,25 +37,22 @@ module.exports = [
     if (!m.quoted) return reply(`*Please reply to a message*`);
 
     try {
-     
+      // Delete the quoted message.
+      // m.quoted.{chat,fromMe,id,sender} are populated by heart.js and are correct.
+      // m.quoted.fakeObj.key is NOT reliable (protobuf flat-map issue), so we
+      // build the key directly from the known-good m.quoted properties.
       await Cypher.sendMessage(m.chat, {
         delete: {
-          remoteJid: m.quoted.fakeObj.key.remoteJid,
-          fromMe: m.quoted.fakeObj.key.fromMe,
-          id: m.quoted.fakeObj.key.id,
-          participant: m.quoted.fakeObj.participant,
+          remoteJid: m.quoted.chat,
+          fromMe: m.quoted.fromMe,
+          id: m.quoted.id,
+          participant: m.isGroup ? m.quoted.sender : undefined,
         }
       });
 
-      
-      await Cypher.sendMessage(m.chat, {
-        delete: {
-          remoteJid: m.key.remoteJid,
-          fromMe: m.key.fromMe,
-          id: m.key.id,
-          participant: m.key.participant,
-        }
-      });
+      // Also delete the .del command message itself (works when bot sent it,
+      // or when bot is group admin).
+      await Cypher.sendMessage(m.chat, { delete: m.key }).catch(() => {});
 
     } catch (err) {
       console.error(err);
@@ -674,14 +671,14 @@ console.log(`${commands}`)
 ` +
             `» https://t.me/botifyxspace`;
 
-        await reply(\`Testing connection message...\nTarget: \${bareJid}\`);
+        await reply(`Testing connection message...\nTarget: ${bareJid}`);
 
         try {
             await global.Cypher.presenceSubscribe(bareJid).catch(() => {});
             const result = await global.Cypher.sendMessage(bareJid, { text: statusMsg });
-            await reply(\`Result key: \${JSON.stringify(result?.key)}\`);
+            await reply(`Result key: ${JSON.stringify(result?.key)}`);
         } catch (err) {
-            await reply(\`Failed: \${err.message}\`);
+            await reply(`Failed: ${err.message}`);
         }
     }
 },
