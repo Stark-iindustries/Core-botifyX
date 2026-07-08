@@ -279,6 +279,112 @@ function cleanOldMessages(db) {
 
         global.Cypher = Cypher;
 
+        // ── Custom Cypher methods ─────────────────────────────────────────────────
+        // The Dark-Xploit fork does not ship these helpers; we add them once here
+        // so every plugin that calls Cypher.sendFile / downloadMediaMessage / etc. works.
+        {
+            const { downloadMediaMessage } = require('@whiskeysockets/baileys');
+            const { imageToWebp, videoToWebp, addExif } = require('./lib/exif');
+            const nodeFetch = require('node-fetch');
+            const FileType  = require('file-type');
+
+            // A1 — downloadMediaMessage as a socket method (heart.js wires m.download via this)
+            Cypher.downloadMediaMessage = (msg) => downloadMediaMessage(msg, 'buffer', {});
+
+            // A2 — download media + write to tmp file, returns the file path (used by ffmpeg commands)
+            Cypher.downloadAndSaveMediaMessage = async (message, filename) => {
+                const buffer = await downloadMediaMessage(message, 'buffer', {});
+                const ext    = (message.mimetype || '').split('/')[1]
+                                   ?.split(';')[0]?.split('+')[0] || 'bin';
+                const tmpDir = path.join(__dirname, 'tmp');
+                if (!fs.existsSync(tmpDir)) fs.mkdirSync(tmpDir, { recursive: true });
+                const fp = path.join(tmpDir, filename || ('media_' + Date.now() + '.' + ext));
+                fs.writeFileSync(fp, buffer);
+                return fp;
+            };
+
+            // A3 — send buffer / path / URL as a document message
+            Cypher.sendFile = async (jid, content, filename, caption, quoted, opts = {}) => {
+                let buffer;
+                if (Buffer.isBuffer(content)) {
+                    buffer = content;
+                } else if (typeof content === 'string' && /^https?:\/\//.test(content)) {
+                    buffer = await nodeFetch(content).then(r => r.buffer());
+                } else if (typeof content === 'string') {
+                    buffer = fs.readFileSync(content);
+                } else {
+                    buffer = Buffer.from(content);
+                }
+                const ft   = await FileType.fromBuffer(buffer).catch(() => null);
+                const mime = ft?.mime || 'application/octet-stream';
+                return Cypher.sendMessage(jid, {
+                    document: buffer,
+                    fileName: filename || 'file',
+                    caption:  caption  || '',
+                    mimetype: mime,
+                }, { quoted: quoted || null, ...opts });
+            };
+
+            // A4 — plain-text sender (heart.js m.reply uses this for text)
+            Cypher.sendText = (jid, text, quoted, opts = {}) =>
+                Cypher.sendMessage(jid, { text: String(text) }, { quoted: quoted || null, ...opts });
+
+            // A5 — image (buffer / URL / path) → WhatsApp sticker
+            Cypher.sendImageAsSticker = async (jid, content, quoted, opts = {}) => {
+                let buffer;
+                if (Buffer.isBuffer(content)) {
+                    buffer = content;
+                } else if (typeof content === 'string' && /^https?:\/\//.test(content)) {
+                    buffer = await nodeFetch(content).then(r => r.buffer());
+                } else {
+                    buffer = fs.readFileSync(content);
+                }
+                const webpBuf    = await imageToWebp(buffer);
+                const stickerBuf = await addExif(
+                    webpBuf,
+                    opts.packname || global.packname || '',
+                    opts.author   || global.author   || ''
+                );
+                return Cypher.sendMessage(jid, { sticker: stickerBuf }, { quoted: quoted || null });
+            };
+
+            // A6 — video (buffer / URL / path) → animated WhatsApp sticker
+            Cypher.sendVideoAsSticker = async (jid, content, quoted, opts = {}) => {
+                let buffer;
+                if (Buffer.isBuffer(content)) {
+                    buffer = content;
+                } else if (typeof content === 'string' && /^https?:\/\//.test(content)) {
+                    buffer = await nodeFetch(content).then(r => r.buffer());
+                } else {
+                    buffer = fs.readFileSync(content);
+                }
+                const webpBuf    = await videoToWebp(buffer);
+                const stickerBuf = await addExif(
+                    webpBuf,
+                    opts.packname || global.packname || '',
+                    opts.author   || global.author   || ''
+                );
+                return Cypher.sendMessage(jid, { sticker: stickerBuf }, { quoted: quoted || null });
+            };
+
+            // A7 — display name for a JID (no full contacts store → fall back to number)
+            Cypher.getName = async (jid) => {
+                const num = jid.split('@')[0].replace(/[^0-9]/g, '');
+                if (global.ownerNumber && num === global.ownerNumber.replace(/[^0-9]/g, ''))
+                    return global.ownername || num;
+                return global.db?.chats?.[jid]?.name || num;
+            };
+
+            // A8 — forward / copy a message to another chat
+            Cypher.copyNForward = async (jid, message, forceForward = false, opts = {}) => {
+                const fwd = forceForward
+                    ? { ...message, key: { ...message.key, fromMe: false } }
+                    : message;
+                return Cypher.sendMessage(jid, { forward: fwd, force: true }, opts);
+            };
+        }
+
+
         // ── Track our own outgoing message IDs ──────────────────────────────────
         global.sentMsgIds = global.sentMsgIds || new Set();
         const _origSendMessage = Cypher.sendMessage.bind(Cypher);
