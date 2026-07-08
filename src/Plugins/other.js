@@ -248,8 +248,12 @@ module.exports = [
             commandList += `└▣\n`;
         }
 
-        // Send standalone (no quote) — matches CypherX behaviour
-        await Cypher.sendMessage(m.chat, { text: menu + '\n' + commandList });
+        // Two separate messages:
+        // 1. Header — always fully visible, no fold
+        // 2. Command list — long enough to immediately trigger WhatsApp's
+        //    "Read more" collapse from line 1, so fold lands right after header
+        await Cypher.sendMessage(m.chat, { text: menu });
+        await Cypher.sendMessage(m.chat, { text: commandList.trim() });
       }
     },
     {
