@@ -443,8 +443,38 @@ module.exports = [
 },
   {
   command: ['savestatus', 'save'],
-  operate: async ({ m, saveStatusMessage }) => {
-    await saveStatusMessage(m);
+  react: '💾',
+  operate: async ({ m, Cypher, reply }) => {
+    if (!m.quoted) return reply('*Reply to a status to save it!*');
+
+    const mime = m.quoted.mimetype || '';
+
+    try {
+      const buffer = await m.quoted.download();
+
+      if (/image/.test(mime)) {
+        await Cypher.sendMessage(m.chat, {
+          image: buffer,
+          caption: m.quoted.caption || ''
+        }, { quoted: m });
+      } else if (/video/.test(mime)) {
+        await Cypher.sendMessage(m.chat, {
+          video: buffer,
+          caption: m.quoted.caption || '',
+          mimetype: 'video/mp4'
+        }, { quoted: m });
+      } else if (/audio/.test(mime)) {
+        await Cypher.sendMessage(m.chat, {
+          audio: buffer,
+          mimetype: 'audio/mpeg'
+        }, { quoted: m });
+      } else {
+        reply('*Unsupported type. Reply to an image, video, or audio status.*');
+      }
+    } catch (err) {
+      console.error('[BOTIFY-X] savestatus error:', err.message);
+      reply('*Failed to save status. Please try again.*');
+    }
   }
 },
 {
