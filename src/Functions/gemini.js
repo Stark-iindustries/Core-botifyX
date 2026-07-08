@@ -9,7 +9,7 @@ const GEMINI_API_KEY = 'YOUR_GEMINI_API_KEY_HERE';
 
 class GeminiAI {
     constructor() {
-        if (!GEMINI_API_KEY || GEMINI_API_KEY === 'YOUR_GEMINI_API_KEY_HERE') {
+        if (!GEMINI_API_KEY || GEMINI_API_KEY === 'AQ.Ab8RN6LYSklOjpQ8-lMWIq8LYanyXSLd-S8mL697oI8ziiLzRA') {
             console.warn('[BOTIFY-X] ⚠️  GEMINI_API_KEY not set in src/Functions/gemini.js');
         }
         this.genAI    = new GoogleGenerativeAI(GEMINI_API_KEY);
