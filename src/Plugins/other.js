@@ -210,7 +210,7 @@ module.exports = [
 
         // CypherX-style header: plain text labels, ┌▣ / └▣ box corners
         const menu =
-          `┌▣ ◈ ${botname} ◈\n` +
+          `┌▣ ◈ *${BOTNAME}* ◈\n` +
           `│ *Owner* : ${owner}\n` +
           `│ *Prefix* : [${prefix}]\n` +
           `│ *Host* : ${platform}\n` +
