@@ -231,16 +231,15 @@ module.exports = [
             const cmds = Array.isArray(p.command) ? p.command : [p.command];
             if (!categories.has(cat)) categories.set(cat, new Set());
             const set = categories.get(cat);
-            cmds.forEach(c => { if (c) set.add(String(c).toUpperCase()); });
+            cmds.forEach(c => { if (c) set.add(String(c).toLowerCase()); });
         }
 
         let commandList = '';
         for (const cat of [...categories.keys()].sort()) {
-            commandList += `\n┌▣ ◈ ${cat} MENU ◈\n`;
+            commandList += `\n┏▣ ◈ *${cat} MENU* ◈\n`;
             for (const cmd of [...categories.get(cat)].sort()) {
-                commandList += `│ ▶▶ ${cmd}\n`;
+                commandList += `│➽ ${cmd}\n`;
             }
-            commandList += `└▣\n`;
         }
 
         // Send standalone (no quote) — matches CypherX behaviour
