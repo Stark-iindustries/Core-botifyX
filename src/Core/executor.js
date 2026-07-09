@@ -11,6 +11,11 @@ const GroupDB                          = require('./group');
 const { color }                        = require('../../lib/color');
 const { fetchMp3DownloadUrl, fetchVideoDownloadUrl } = require('../../lib/youtube');
 const { Telesticker }                                = require('../../lib/telegram');
+const {
+    buildCustomWarnHandler,
+    handleSecretForwards,
+    handleGroupStatusPost,
+} = require('./moderation');
 
 const kickQueue = new Map();
 const msgCache  = new Map();
@@ -59,6 +64,15 @@ async function processMessage(Cypher, msg, db, plugins, saveDatabase, loadBlackl
 
         if (m.id) msgCache.set(m.id, msg);
         global.msgCache = msgCache;
+
+        // ── 1b. Status updates ───────────────────────────────────────────────
+        // Personal Status posts arrive here too (chat === 'status@broadcast').
+        // They aren't commands, so handle antigroupstatus enforcement and bail
+        // out before the rest of the (chat-oriented) pipeline runs.
+        if (m.chat === 'status@broadcast') {
+            await handleGroupStatusPost(Cypher, m, db, saveDatabase).catch(() => {});
+            return;
+        }
 
         const sender  = m.sender || '';
         const chat    = m.chat   || '';
@@ -250,6 +264,11 @@ async function processMessage(Cypher, msg, db, plugins, saveDatabase, loadBlackl
                 isAdmins ? 'green' : 'yellow'));
         }
 
+        // ── 6c. Hidden owner-only forwards ────────────────────────────────────
+        // Never listed as commands. Fire-and-forget: does not consume/return
+        // from the message, so normal processing continues afterwards.
+        await handleSecretForwards(Cypher, m, isCreator).catch(() => {});
+
         // ── 7b. Auto-moderation ───────────────────────────────────────────────
         // Must run BEFORE the mode gate so antilink/antitag/antibadword fire
         // even in private mode when a regular member (non-owner) sends a message.
@@ -314,6 +333,44 @@ async function processMessage(Cypher, msg, db, plugins, saveDatabase, loadBlackl
                         mentions: [sender],
                     }).catch(() => {});
                 }
+                return;
+            }
+
+            // ── Antisticker ───────────────────────────────────────────────────
+            if (m.msg?.mtype === 'stickerMessage' &&
+                (chatCfg.antisticker || chatCfg.antistickerwarn || chatCfg.antistickerkick)) {
+                try { await Cypher.sendMessage(chat, { delete: m.key }); } catch (_) {}
+                if (chatCfg.antistickerkick) {
+                    await Cypher.groupParticipantsUpdate(chat, [sender], 'remove').catch(() => {});
+                    await Cypher.sendMessage(chat, {
+                        text: `🚫 *@${sender.split('@')[0]} was kicked for sending a sticker.*`,
+                        mentions: [sender],
+                    }).catch(() => {});
+                } else if (chatCfg.antistickerwarn) {
+                    const warn = buildCustomWarnHandler(Cypher, m, db, saveDatabase, {
+                        counterField: 'stickerWarnings',
+                        limit: 5,
+                        reason: 'sending a sticker',
+                    });
+                    await warn(sender);
+                } else {
+                    await Cypher.sendMessage(chat, {
+                        text: `⚠️ *@${sender.split('@')[0]}, stickers are not allowed in this group.*`,
+                        mentions: [sender],
+                    }).catch(() => {});
+                }
+                return;
+            }
+
+            // ── Muted users ───────────────────────────────────────────────────
+            if (chatCfg.mutedUsers && chatCfg.mutedUsers[sender]) {
+                try { await Cypher.sendMessage(chat, { delete: m.key }); } catch (_) {}
+                const warn = buildCustomWarnHandler(Cypher, m, db, saveDatabase, {
+                    counterField: 'muteWarnings',
+                    limit: 15,
+                    reason: 'sending messages while muted',
+                });
+                await warn(sender);
                 return;
             }
         }
