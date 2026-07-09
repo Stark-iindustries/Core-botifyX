@@ -115,6 +115,15 @@ function initChatEntry(jid) {
             warnings: {},
             warnLimit: 5,
             mute: false,
+            antisticker: false,
+            antistickerwarn: false,
+            antistickerkick: false,
+            stickerWarnings: {},
+            antigroupstatuswarn: false,
+            antigroupstatuskick: false,
+            statusWarnings: {},
+            mutedUsers: {},
+            muteWarnings: {},
         };
     }
     return global.db.chats[jid];
