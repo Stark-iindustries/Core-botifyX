@@ -248,12 +248,14 @@ module.exports = [
             commandList += `└▣\n`;
         }
 
-        // Two separate messages:
-        // 1. Header — always fully visible, no fold
-        // 2. Command list — long enough to immediately trigger WhatsApp's
-        //    "Read more" collapse from line 1, so fold lands right after header
-        await Cypher.sendMessage(m.chat, { text: menu });
-        await Cypher.sendMessage(m.chat, { text: commandList.trim() });
+        // Single message: header + full command list together.
+        // WhatsApp itself folds long messages behind "Read more" — it does
+        // this based on the message's rendered length/line count, not
+        // because of any special character. Sending everything as one
+        // message (instead of two separate sends) is what makes WhatsApp
+        // fold it after the header, exactly like CypherX's `*menu` output.
+        const fullMenu = `${menu}\n${commandList.trim()}`;
+        await Cypher.sendMessage(m.chat, { text: fullMenu });
       }
     },
     {
