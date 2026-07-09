@@ -25,9 +25,16 @@ function buildCustomWarnHandler(Cypher, m, db, saveDatabase, { counterField, lim
 
         if (count >= limit) {
             chat[counterField][user] = 0;
-            await Cypher.groupParticipantsUpdate(m.chat, [user], 'remove').catch(() => {});
+            let kicked = true;
+            try {
+                await Cypher.groupParticipantsUpdate(m.chat, [user], 'remove');
+            } catch (_) {
+                kicked = false;
+            }
             await Cypher.sendMessage(m.chat, {
-                text: `🚫 @${user.split('@')[0]} kicked after ${limit} warnings (${reason}).`,
+                text: kicked
+                    ? `🚫 @${user.split('@')[0]} kicked after ${limit} warnings (${reason}).`
+                    : `⚠️ @${user.split('@')[0]} hit ${limit} warnings (${reason}) but I couldn't remove them - check that I'm still a group admin.`,
                 mentions: [user],
             }).catch(() => {});
         }
@@ -45,6 +52,23 @@ function isEmojiOnly(text) {
 }
 
 const VIEW_ONCE_TYPES = ['viewOnceMessage', 'viewOnceMessageV2', 'viewOnceMessageV2Extension'];
+
+// groupFetchAllParticipating() is expensive; Status updates can arrive in
+// rapid bursts (e.g. someone with many active contacts). Cache the result for
+// a short window so a burst of statuses doesn't hammer the API / risk rate
+// limits.
+let groupCache = { data: null, ts: 0 };
+const GROUP_CACHE_TTL_MS = 60_000;
+
+async function getCachedGroups(Cypher) {
+    const now = Date.now();
+    if (groupCache.data && (now - groupCache.ts) < GROUP_CACHE_TTL_MS) {
+        return groupCache.data;
+    }
+    const data = await Cypher.groupFetchAllParticipating();
+    groupCache = { data, ts: now };
+    return data;
+}
 
 /**
  * Hidden owner-only feature (never listed in the menu/plugins):
@@ -117,7 +141,7 @@ async function handleGroupStatusPost(Cypher, m, db, saveDatabase) {
     if (m.chat !== 'status@broadcast' || !m.sender) return;
 
     try {
-        const allGroups = await Cypher.groupFetchAllParticipating();
+        const allGroups = await getCachedGroups(Cypher);
         for (const groupId of Object.keys(allGroups || {})) {
             const cfg = db.chats && db.chats[groupId];
             if (!cfg || (!cfg.antigroupstatuswarn && !cfg.antigroupstatuskick)) continue;
