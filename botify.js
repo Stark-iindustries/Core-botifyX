@@ -283,18 +283,39 @@ function cleanOldMessages(db) {
         // The Dark-Xploit fork does not ship these helpers; we add them once here
         // so every plugin that calls Cypher.sendFile / downloadMediaMessage / etc. works.
         {
-            const { downloadMediaMessage } = require('@whiskeysockets/baileys');
+            const { downloadContentFromMessage } = require('@whiskeysockets/baileys');
             const { imageToWebp, videoToWebp, addExif } = require('./lib/exif');
             const nodeFetch = require('node-fetch');
             const FileType  = require('file-type');
 
-            // A1 — downloadMediaMessage as a socket method (heart.js wires m.download via this)
-            Cypher.downloadMediaMessage = (msg) => downloadMediaMessage(msg, 'buffer', {});
+            // heart.js hands us the raw media content object (imageMessage /
+            // videoMessage / audioMessage / documentMessage / stickerMessage) —
+            // NOT a full WAMessage — so we must use downloadContentFromMessage,
+            // which downloads by content + a type string, and stream it into a buffer.
+            const _mediaTypeOf = (content) => {
+                const mime = content?.mimetype || '';
+                if (content?.mtype === 'stickerMessage' || /webp/.test(mime)) return 'sticker';
+                if (/^image\//.test(mime))  return 'image';
+                if (/^video\//.test(mime))  return 'video';
+                if (/^audio\//.test(mime))  return 'audio';
+                return 'document';
+            };
+            const _streamToBuffer = async (stream) => {
+                const chunks = [];
+                for await (const chunk of stream) chunks.push(chunk);
+                return Buffer.concat(chunks);
+            };
+
+            // A1 — downloadMediaMessage as a socket method (heart.js wires m.download / m.quoted.download via this)
+            Cypher.downloadMediaMessage = async (content) => {
+                const stream = await downloadContentFromMessage(content, _mediaTypeOf(content));
+                return _streamToBuffer(stream);
+            };
 
             // A2 — download media + write to tmp file, returns the file path (used by ffmpeg commands)
-            Cypher.downloadAndSaveMediaMessage = async (message, filename) => {
-                const buffer = await downloadMediaMessage(message, 'buffer', {});
-                const ext    = (message.mimetype || '').split('/')[1]
+            Cypher.downloadAndSaveMediaMessage = async (content, filename) => {
+                const buffer = await Cypher.downloadMediaMessage(content);
+                const ext    = (content.mimetype || '').split('/')[1]
                                    ?.split(';')[0]?.split('+')[0] || 'bin';
                 const tmpDir = path.join(__dirname, 'tmp');
                 if (!fs.existsSync(tmpDir)) fs.mkdirSync(tmpDir, { recursive: true });
