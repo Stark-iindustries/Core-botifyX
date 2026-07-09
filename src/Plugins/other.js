@@ -248,26 +248,22 @@ module.exports = [
             commandList += `└▣\n`;
         }
 
-        // WhatsApp's "Read more" fold on a text message is a fixed visible
-        // line/height cap on the bubble - it always shows roughly the same
-        // number of lines before folding, no matter what the rest of the
-        // message contains. Just merging header+list into one message isn't
-        // enough if WA's visible cap is taller than the header alone - the
-        // fold then lands partway into the command list instead of right
-        // after the header.
+        // WhatsApp folds a text message behind "Read more" once it passes a
+        // character-count budget (measured empirically at ~750-800 chars
+        // for this message shape) - it is NOT a fixed visible line count.
+        // Attempt 1 padded with 24 lines of a "blank-looking" character,
+        // each on its own line - that ate into the SAME budget but each
+        // line break is still a real line, so it showed up as a big empty
+        // gap in the chat instead of staying invisible.
         //
-        // Fix: insert invisible filler lines (U+3164 Hangul Filler - has a
-        // real character on the line so WhatsApp won't strip it as empty,
-        // but renders as nothing visible) right after the header. These
-        // filler lines soak up whatever remaining "visible" line budget WA
-        // allows beyond the header, so by the time real content resumes
-        // (the command list), it is already past WA's fold point and stays
-        // hidden behind "Read more" - landing the fold exactly at the
-        // header's closing └▣, like CypherX.
-        const INVISIBLE = '\u3164';
-        const fold = Array(24).fill(INVISIBLE).join('\n');
+        // Fix: pad with true zero-width characters (U+200B) appended
+        // directly onto the end of the header's last line - no new line
+        // breaks at all, so nothing is visible, but it consumes enough of
+        // WhatsApp's character budget that the fold lands right after the
+        // header instead of spilling into the command list.
+        const ZERO_WIDTH = '\u200B'.repeat(900);
 
-        const fullMenu = `${menu}\n${fold}\n${commandList.trim()}`;
+        const fullMenu = `${menu}${ZERO_WIDTH}\n${commandList.trim()}`;
         await Cypher.sendMessage(m.chat, { text: fullMenu });
       }
     },
