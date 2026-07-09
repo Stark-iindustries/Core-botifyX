@@ -248,13 +248,26 @@ module.exports = [
             commandList += `└▣\n`;
         }
 
-        // Single message: header + full command list together.
-        // WhatsApp itself folds long messages behind "Read more" — it does
-        // this based on the message's rendered length/line count, not
-        // because of any special character. Sending everything as one
-        // message (instead of two separate sends) is what makes WhatsApp
-        // fold it after the header, exactly like CypherX's `*menu` output.
-        const fullMenu = `${menu}\n${commandList.trim()}`;
+        // WhatsApp's "Read more" fold on a text message is a fixed visible
+        // line/height cap on the bubble - it always shows roughly the same
+        // number of lines before folding, no matter what the rest of the
+        // message contains. Just merging header+list into one message isn't
+        // enough if WA's visible cap is taller than the header alone - the
+        // fold then lands partway into the command list instead of right
+        // after the header.
+        //
+        // Fix: insert invisible filler lines (U+3164 Hangul Filler - has a
+        // real character on the line so WhatsApp won't strip it as empty,
+        // but renders as nothing visible) right after the header. These
+        // filler lines soak up whatever remaining "visible" line budget WA
+        // allows beyond the header, so by the time real content resumes
+        // (the command list), it is already past WA's fold point and stays
+        // hidden behind "Read more" - landing the fold exactly at the
+        // header's closing └▣, like CypherX.
+        const INVISIBLE = '\u3164';
+        const fold = Array(24).fill(INVISIBLE).join('\n');
+
+        const fullMenu = `${menu}\n${fold}\n${commandList.trim()}`;
         await Cypher.sendMessage(m.chat, { text: fullMenu });
       }
     },
