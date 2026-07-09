@@ -1231,4 +1231,155 @@ module.exports = [
     fs.unlinkSync(nmfilect);
   }
 },
+{
+    command: ['antisticker'],
+    operate: async (context) => {
+        const { m, db, from, isBotAdmins, isAdmins, isCreator, args, mess, reply } = context;
+
+        if (!m.isGroup) return reply(mess.group);
+        if (!isBotAdmins) return reply(mess.admin);
+        if (!isAdmins && !isCreator) return reply(mess.notadmin);
+        if (args.length < 2) return reply("*Usage: .antisticker <delete/warn/kick> <on/off>*");
+
+        const mode = args[0].toLowerCase();
+        const state = args[1].toLowerCase();
+
+        if (!["delete", "warn", "kick"].includes(mode)) {
+            return reply("*Invalid mode! Use 'delete', 'warn', or 'kick'.*");
+        }
+        if (!["on", "off"].includes(state)) {
+            return reply("*Invalid state! Use 'on' or 'off'.*");
+        }
+
+        if (state === "on") {
+            db.chats[from].antisticker = false;
+            db.chats[from].antistickerwarn = false;
+            db.chats[from].antistickerkick = false;
+
+            if (mode === "delete") db.chats[from].antisticker = true;
+            else if (mode === "warn") db.chats[from].antistickerwarn = true;
+            else if (mode === "kick") db.chats[from].antistickerkick = true;
+
+            reply(`*Successfully enabled antisticker ${mode} mode! Stickers sent by regular members will now be removed${mode === "warn" ? " and the sender warned (kicked after 5 warnings)" : mode === "kick" ? " and the sender kicked immediately" : ""}.*`);
+        } else {
+            if (mode === "delete") db.chats[from].antisticker = false;
+            else if (mode === "warn") db.chats[from].antistickerwarn = false;
+            else if (mode === "kick") db.chats[from].antistickerkick = false;
+
+            reply(`*Successfully disabled antisticker ${mode} mode!*`);
+        }
+    }
+},
+{
+    command: ['antigroupstatus'],
+    operate: async (context) => {
+        const { m, db, from, isBotAdmins, isAdmins, isCreator, args, mess, reply } = context;
+
+        if (!m.isGroup) return reply(mess.group);
+        if (!isBotAdmins) return reply(mess.admin);
+        if (!isAdmins && !isCreator) return reply(mess.notadmin);
+        if (args.length < 2) {
+            return reply("*Usage: .antigroupstatus <warn/kick> <on/off>*\n\n_Note: WhatsApp gives no way for anyone (not even the bot) to delete another member's personal Status update - only warn/kick are available here._");
+        }
+
+        const mode = args[0].toLowerCase();
+        const state = args[1].toLowerCase();
+
+        if (!["warn", "kick"].includes(mode)) {
+            return reply("*Invalid mode! Use 'warn' or 'kick'.*");
+        }
+        if (!["on", "off"].includes(state)) {
+            return reply("*Invalid state! Use 'on' or 'off'.*");
+        }
+
+        if (state === "on") {
+            db.chats[from].antigroupstatuswarn = false;
+            db.chats[from].antigroupstatuskick = false;
+
+            if (mode === "warn") db.chats[from].antigroupstatuswarn = true;
+            else db.chats[from].antigroupstatuskick = true;
+
+            reply(`*Successfully enabled antigroupstatus ${mode} mode! Members of this group who post a personal Status will now be ${mode === "warn" ? "warned (kicked after 5 warnings)" : "kicked immediately"}.*`);
+        } else {
+            if (mode === "warn") db.chats[from].antigroupstatuswarn = false;
+            else db.chats[from].antigroupstatuskick = false;
+
+            reply(`*Successfully disabled antigroupstatus ${mode} mode!*`);
+        }
+    }
+},
+{
+    command: ['muteuser'],
+    operate: async (context) => {
+        const { m, db, from, isBotAdmins, isAdmins, isCreator, text, mess, reply, Cypher } = context;
+
+        if (!m.isGroup) return reply(mess.group);
+        if (!isBotAdmins) return reply(mess.admin);
+        if (!isAdmins && !isCreator) return reply(mess.notadmin);
+
+        let target = (m.mentionedJid && m.mentionedJid[0])
+            || (m.quoted ? m.quoted.sender : null)
+            || (text.replace(/\D/g, "") ? text.replace(/\D/g, "") + "@s.whatsapp.net" : null);
+
+        if (!target) return reply("*Mention or reply to a user to mute/unmute them!*");
+
+        const targetNum = target.replace(/@\S+$/, "");
+        const ownerNum = (global.creator || "").replace(/@\S+$/, "");
+        if (targetNum && ownerNum && targetNum === ownerNum) {
+            return reply("*You can't mute the bot owner.*");
+        }
+
+        if (!db.chats[from].mutedUsers) db.chats[from].mutedUsers = {};
+
+        if (db.chats[from].mutedUsers[target]) {
+            delete db.chats[from].mutedUsers[target];
+            if (db.chats[from].muteWarnings) delete db.chats[from].muteWarnings[target];
+            await Cypher.sendMessage(from, {
+                text: `*@${target.split("@")[0]} has been unmuted.*`,
+                mentions: [target],
+            }, { quoted: m });
+        } else {
+            db.chats[from].mutedUsers[target] = true;
+            await Cypher.sendMessage(from, {
+                text: `*@${target.split("@")[0]} has been muted.*\nEvery message they send will be deleted. They'll be warned up to 15 times, then kicked.\n\n_Run \`.muteuser\` again (mention/reply) to unmute._`,
+                mentions: [target],
+            }, { quoted: m });
+        }
+    }
+},
+{
+    command: ['togstatus'],
+    operate: async (context) => {
+        const { m, isCreator, isAdmins, mess, reply, Cypher } = context;
+
+        if (!m.isGroup) return reply(mess.group);
+        if (!isCreator && !isAdmins) return reply(mess.notadmin);
+        if (!m.quoted) return reply("*Reply to a text or media message to post it to the bot's Status, visible only to this group's members!*");
+
+        try {
+            const groupMeta = await Cypher.groupMetadata(m.chat);
+            const statusJidList = (groupMeta.participants || []).map((p) => p.id);
+            const q = m.quoted;
+            const caption = q.text || q.caption || "";
+
+            let content = null;
+            if (q.mtype === "imageMessage") {
+                content = { image: await Cypher.downloadMediaMessage(q), caption };
+            } else if (q.mtype === "videoMessage") {
+                content = { video: await Cypher.downloadMediaMessage(q), caption };
+            } else if (q.mtype === "audioMessage") {
+                content = { audio: await Cypher.downloadMediaMessage(q), mimetype: "audio/mp4" };
+            } else if (caption) {
+                content = { text: caption };
+            }
+
+            if (!content) return reply("*Unsupported message type. Reply to text, an image, a video, or audio.*");
+
+            await Cypher.sendMessage("status@broadcast", content, { statusJidList, backgroundColor: "#000000" });
+            reply(`*✅ Posted to status — visible to ${statusJidList.length} member(s) of this group.*`);
+        } catch (e) {
+            reply(`❌ *Failed to post to status:* ${e.message}`);
+        }
+    }
+},
 ];
