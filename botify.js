@@ -274,7 +274,11 @@ function cleanOldMessages(db) {
             printQRInTerminal: false,
             syncFullHistory:   false,
             markOnlineOnConnect: true,
-            getMessage: async () => ({ conversation: '' }),
+            msgRetryCounterCache: new Map(),
+            getMessage: async (key) => {
+                const cached = global.msgCache?.get(key?.id);
+                return cached?.message || { conversation: '' };
+            },
         });
 
         global.Cypher = Cypher;
