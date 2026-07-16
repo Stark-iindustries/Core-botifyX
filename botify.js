@@ -217,6 +217,17 @@ function cleanOldMessages(db) {
     console.log(cyan(`[BOTIFY-X] Platform : ${detectPlatform()}`));
     console.log(cyan(`[BOTIFY-X] Node.js  : ${process.version}`));
 
+    // ── Auto-detect session ID from any env var containing the BOTIFY-X= format ──
+    // Some platforms (e.g. CypherX) inject the value under a different variable
+    // name — scan all env vars so the bot works regardless of what name is used.
+    if (!process.env.SESSION_ID) {
+        const found = Object.entries(process.env).find(([, v]) => v && v.startsWith('BOTIFY-X='));
+        if (found) {
+            process.env.SESSION_ID = found[1];
+            console.log(require('./lib/color').cyan('[BOTIFY-X] ✅ Session ID auto-detected from env var: ' + found[0]));
+        }
+    }
+
     if (!process.env.SESSION_ID) {
         if (canPromptInteractively()) {
             try {
