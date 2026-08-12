@@ -355,12 +355,17 @@ function cleanOldMessages(db) {
             // reachable PORT (bound immediately to satisfy the 60s boot
             // timeout) — so Core listens on an internal-only port here and
             // tells the bootstrap (over the existing IPC channel) to proxy
-            // traffic to it. On every other platform Core owns PORT directly.
+            // traffic to it. On every other platform Core owns the assigned
+            // port directly. Pterodactyl/Katabump-style panels hand out the
+            // allocated port via SERVER_PORT (not the generic PORT var most
+            // PaaS platforms use) — check that first or we'd bind 3000 while
+            // the panel actually routes traffic to a different port.
             const dashboardPort = isHeroku
                 ? parseInt(process.env.CORE_INTERNAL_PORT || '4021', 10)
-                : parseInt(process.env.PORT || '3000', 10);
+                : parseInt(process.env.SERVER_PORT || process.env.PORT || '3000', 10);
 
             const publicUrl =
+                (process.env.SERVER_IP && process.env.SERVER_PORT) ? `http://${process.env.SERVER_IP}:${process.env.SERVER_PORT}` :
                 process.env.RAILWAY_STATIC_URL ? `https://${process.env.RAILWAY_STATIC_URL}` :
                 process.env.RENDER_EXTERNAL_URL ? process.env.RENDER_EXTERNAL_URL :
                 process.env.KOYEB_PUBLIC_DOMAIN  ? `https://${process.env.KOYEB_PUBLIC_DOMAIN}` :
