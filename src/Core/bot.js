@@ -160,8 +160,12 @@ async function downloadSessionData(callback) {
                 extractOwnerFromCreds();
                 if (typeof callback === 'function') await callback();
             } else {
-                console.error(color('❌ No valid session found. Paste a valid BOTIFY-X= session ID when prompted.', 'red'));
-                process.exit(1);
+                // No legacy SESSION_ID and no local session yet — this is a
+                // brand new deployment. Don't exit: let startBot() create a
+                // fresh (unregistered) auth state and open the web pairing
+                // dashboard so the owner can link by phone number instead.
+                console.log(color('ℹ️  No session found — waiting for pairing via web dashboard.', 'cyan'));
+                if (typeof callback === 'function') await callback();
             }
         }
     } catch (err) {

@@ -14,6 +14,48 @@ const green  = (t) => `\x1b[32m${t}\x1b[0m`;
 const yellow = (t) => `\x1b[33m${t}\x1b[0m`;
 const red    = (t) => `\x1b[31m${t}\x1b[0m`;
 
+// ── Rolling console log buffer (feeds the dashboard's Console tab) ────────────
+// Wraps console.log/warn/error so terminal output is unchanged, but every line
+// also lands in a capped in-memory buffer the dashboard can poll/tail.
+const BOOT_TIME = Date.now();
+const LOG_CAP = 2000;
+const logBuffer = [];
+let logSeq = 0;
+function pushLog(text) {
+    logSeq += 1;
+    logBuffer.push({ id: logSeq, text: String(text) });
+    if (logBuffer.length > LOG_CAP) logBuffer.splice(0, logBuffer.length - LOG_CAP);
+}
+function stripAnsi(s) { return s.replace(/\x1b\[[0-9;]*m/g, ''); }
+
+// Local IPv4s — used to print a usable dashboard link on hosts (Termux,
+// Pterodactyl/Katabump panels, local dev) that don't hand out a public URL.
+function getLocalIPs() {
+    try {
+        const os = require('os');
+        const nets = os.networkInterfaces();
+        const ips = [];
+        for (const ifaceList of Object.values(nets)) {
+            for (const iface of ifaceList || []) {
+                if (iface.family === 'IPv4' && !iface.internal) ips.push(iface.address);
+            }
+        }
+        return ips;
+    } catch (_) {
+        return [];
+    }
+}
+['log', 'warn', 'error'].forEach((level) => {
+    const original = console[level].bind(console);
+    console[level] = (...args) => {
+        original(...args);
+        try {
+            const line = args.map((a) => (typeof a === 'string' ? a : JSON.stringify(a))).join(' ');
+            pushLog(stripAnsi(line));
+        } catch (_) {}
+    };
+});
+
 // ── .env writer ───────────────────────────────────────────────────────────────
 function writeEnvKey(key, value) {
     let lines = fs.existsSync(ENV_FILE) ? fs.readFileSync(ENV_FILE, 'utf8').split('\n') : [];
@@ -228,23 +270,10 @@ function cleanOldMessages(db) {
         }
     }
 
-    if (!process.env.SESSION_ID) {
-        if (canPromptInteractively()) {
-            try {
-                await promptForSessionId();
-            } catch (e) {
-                console.error(red(`[BOTIFY-X] ❌ Could not read Session ID: ${e.message}`));
-                process.exit(1);
-            }
-        } else {
-            console.error(red('[BOTIFY-X] ❌ SESSION_ID is not set.'));
-            console.error(cyan('[BOTIFY-X] On Railway  → Variables tab → add  SESSION_ID = BOTIFY-X=...'));
-            console.error(cyan('[BOTIFY-X] On Heroku   → Settings → Config Vars → add SESSION_ID'));
-            console.error(cyan('[BOTIFY-X] On Render   → Environment → add SESSION_ID'));
-            console.error(cyan('[BOTIFY-X] Then redeploy / restart.'));
-            process.exit(1);
-        }
-    }
+    // SESSION_ID (BOTIFY-X=... / MEGA-...) is now optional legacy support only.
+    // If present, downloadSessionData() above will still restore it. If absent
+    // and there's no local session on disk either, startBot() below will bring
+    // up the web pairing dashboard instead of prompting on the console.
 
     // ── Listen for update results from the BotifyX bootstrap (parent process) ───
     if (typeof process.send === 'function') {
@@ -266,6 +295,15 @@ function cleanOldMessages(db) {
 
     let retryCount = 0;
     const MAX_RETRIES = 5;
+
+    // ── Dashboard state that must survive across reconnects ──────────────────────
+    // startBot() runs again on every reconnect, so anything the dashboard reads
+    // needs to live outside it and just get updated by each call, rather than be
+    // recreated (recreating the dashboard would try to rebind the same port).
+    let dashboardHandle   = null;
+    let connectionState   = 'connecting'; // connecting | connected | awaiting pairing | disconnected
+    let isRegisteredFlag  = false;
+    const pkg = require('./package.json');
 
     async function startBot() {
         const { state, saveCreds } = await useMultiFileAuthState(SESSION_DIR);
@@ -293,6 +331,124 @@ function cleanOldMessages(db) {
         });
 
         global.Cypher = Cypher;
+        isRegisteredFlag = !!state.creds.registered;
+        connectionState = isRegisteredFlag ? 'connecting' : 'awaiting pairing';
+
+        // ── Web dashboard (Home / Console / Settings) ────────────────────────────
+        // Created once and kept alive across reconnects (startBot() re-runs on
+        // every reconnect — recreating the server here would try to rebind the
+        // same port and crash). Gated behind a random PAIR_TOKEN persisted to
+        // .env: before pairing, whoever holds the link becomes the bot's owner;
+        // after pairing, the same link exposes Console/Settings control.
+        if (!dashboardHandle) {
+            const { startDashboard, generateToken } = require('./src/Core/dashboard');
+
+            let pairToken = process.env.PAIR_TOKEN;
+            if (!pairToken) {
+                pairToken = generateToken();
+                writeEnvKey('PAIR_TOKEN', pairToken);
+                process.env.PAIR_TOKEN = pairToken;
+            }
+
+            const isHeroku = !!process.env.DYNO;
+            // On Heroku the bootstrap process already owns the externally
+            // reachable PORT (bound immediately to satisfy the 60s boot
+            // timeout) — so Core listens on an internal-only port here and
+            // tells the bootstrap (over the existing IPC channel) to proxy
+            // traffic to it. On every other platform Core owns PORT directly.
+            const dashboardPort = isHeroku
+                ? parseInt(process.env.CORE_INTERNAL_PORT || '4021', 10)
+                : parseInt(process.env.PORT || '3000', 10);
+
+            const publicUrl =
+                process.env.RAILWAY_STATIC_URL ? `https://${process.env.RAILWAY_STATIC_URL}` :
+                process.env.RENDER_EXTERNAL_URL ? process.env.RENDER_EXTERNAL_URL :
+                process.env.KOYEB_PUBLIC_DOMAIN  ? `https://${process.env.KOYEB_PUBLIC_DOMAIN}` :
+                process.env.FLY_APP_NAME         ? `https://${process.env.FLY_APP_NAME}.fly.dev` :
+                null;
+
+            const dashboardUrlForDisplay = `${publicUrl || 'http://<your-deployed-host>'}/?token=${pairToken}`;
+
+            try {
+                dashboardHandle = await startDashboard({
+                    port: dashboardPort,
+                    token: pairToken,
+                    ctx: {
+                        requestPairingCode: (number) => global.Cypher.requestPairingCode(number),
+
+                        getStatus: () => ({
+                            registered:  isRegisteredFlag,
+                            online:      connectionState === 'connected',
+                            connection:  connectionState,
+                            uptimeSeconds: process.uptime(),
+                            platform:    detectPlatform(),
+                            botNumber:   (global.Cypher?.user?.id || '').split(':')[0].split('@')[0] || global.ownerNumber || '',
+                            port:        dashboardPort,
+                            dashboardUrl: publicUrl ? `${publicUrl}/?token=${pairToken}` : null,
+                            prefix:      db.settings.prefix ?? '.',
+                            botname:     db.settings.botname || 'BotifyX',
+                            version:     pkg.version || '0.0.0',
+                            commands:    Array.isArray(global.plugins) ? global.plugins.length : 0,
+                            developer:   pkg.author || 'Unknown',
+                        }),
+
+                        getLogs: (since) => ({
+                            lines: logBuffer.filter((l) => l.id > since).map((l) => l.text),
+                            nextCursor: logSeq,
+                        }),
+
+                        controlProcess: (action) => {
+                            if (action === 'start') return 'Bot is already running.';
+                            if (action === 'restart') {
+                                setTimeout(() => {
+                                    if (typeof process.send === 'function') {
+                                        process.send({ type: 'restartRequested' });
+                                    } else {
+                                        process.exit(1);
+                                    }
+                                }, 300);
+                                return 'Restart requested — the bot will be back shortly.';
+                            }
+                            if (action === 'stop') {
+                                setTimeout(() => process.exit(0), 300);
+                                return 'Stopping the bot.';
+                            }
+                        },
+
+                        getSettings: () => ({ ...db.settings }),
+
+                        updateSettings: (patch) => {
+                            for (const key of Object.keys(patch)) {
+                                if (Object.prototype.hasOwnProperty.call(db.settings, key)) {
+                                    db.settings[key] = patch[key];
+                                }
+                            }
+                            saveDatabase();
+                            return { ...db.settings };
+                        },
+                    },
+                });
+
+                if (isHeroku && typeof process.send === 'function') {
+                    process.send({ type: 'dashboardReady', port: dashboardPort });
+                }
+
+                console.log('');
+                console.log(green('[BOTIFY-X] 🌐 Dashboard:'));
+                console.log(green(`[BOTIFY-X]    ${dashboardUrlForDisplay}`));
+                if (!publicUrl) {
+                    console.log(cyan(`[BOTIFY-X]    http://localhost:${dashboardPort}/?token=${pairToken}`));
+                    for (const ip of getLocalIPs()) {
+                        console.log(cyan(`[BOTIFY-X]    http://${ip}:${dashboardPort}/?token=${pairToken}`));
+                    }
+                    console.log(cyan('[BOTIFY-X]    (no public URL detected for this platform — use one of the links above,'));
+                    console.log(cyan('[BOTIFY-X]     or your panel/host\'s own address, with the ?token=... appended)'));
+                }
+                console.log('');
+            } catch (e) {
+                console.error(red(`[BOTIFY-X] ❌ Failed to start dashboard: ${e.message}`));
+            }
+        }
 
         // ── Custom Cypher methods ─────────────────────────────────────────────────
         // The Dark-Xploit fork does not ship these helpers; we add them once here
@@ -443,6 +599,9 @@ function cleanOldMessages(db) {
 
             if (connection === 'open') {
                 retryCount = 0;
+                connectionState = 'connected';
+                isRegisteredFlag = true;
+
                 const botJid = Cypher.user?.id || '';
                 const botNum = jidNormalizedUser(botJid);
                 global.botNumber = botNum;
@@ -532,18 +691,22 @@ function cleanOldMessages(db) {
                 const reason    = new Boom(lastDisconnect?.error)?.output?.statusCode;
                 const loggedOut = reason === DisconnectReason.loggedOut;
 
+                connectionState = 'disconnected';
                 console.log(red(`[BOTIFY-X] Disconnected — code ${reason}`));
 
                 if (loggedOut) {
+                    if (dashboardHandle) dashboardHandle.close();
                     try { fs.rmSync(SESSION_DIR, { recursive: true, force: true }); } catch (_) {}
                     writeEnvKey('SESSION_ID', '');
-                    console.log(red('[BOTIFY-X] Session expired. Restart and paste a new Session ID.'));
+                    writeEnvKey('PAIR_TOKEN', ''); // fresh token next boot
+                    console.log(red('[BOTIFY-X] Session expired. Restart to re-pair via the web dashboard.'));
                     process.exit(1);
                 }
 
                 if (retryCount < MAX_RETRIES) {
                     retryCount++;
                     const delay = Math.min(3000 * retryCount, 30000);
+                    connectionState = 'connecting';
                     console.log(yellow(`[BOTIFY-X] Reconnecting in ${delay / 1000}s (attempt ${retryCount})…`));
                     setTimeout(startBot, delay);
                 } else {
